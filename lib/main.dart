@@ -271,9 +271,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       // User-Agent دسکتاپ برای دریافت HTML کامل با عکس مشاوران
       // سایت بر اساس User-Agent موبایل، عکس‌ها رو از HTML حذف می‌کنه
-      ..setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      )
+	
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
@@ -296,20 +294,24 @@ class _WebViewScreenState extends State<WebViewScreen> {
               _progress = 0.0;
             });
           },
-          onWebResourceError: (WebResourceError error) {
-            setState(() {
-              _hasError = true;
-              _errorMessage = error.description;
-              _isLoading = false;
-              _progress = 0.0;
-            });
-          },
+      onWebResourceError: (WebResourceError error) {
+  debugPrint(
+      'ERROR => code=${error.errorCode} type=${error.errorType} desc=${error.description}');
+
+  setState(() {
+    _hasError = true;
+    _errorMessage =
+        'Code: ${error.errorCode}\n${error.description}';
+    _isLoading = false;
+    _progress = 0.0;
+  });
+},
           onNavigationRequest: (NavigationRequest request) {
             return NavigationDecision.navigate;
           },
         ),
       )
-      ..loadRequest(Uri.parse('https://www.sinapsycho.com/consult/index'));
+      ..loadRequest(Uri.parse('https://google.com'));
   }
 
   void _optimizeForMobile() {
