@@ -294,16 +294,16 @@ class _WebViewScreenState extends State<WebViewScreen> {
               _progress = 0.0;
             });
           },
-      onWebResourceError: (WebResourceError error) {
-  debugPrint(
-      'ERROR => code=${error.errorCode} type=${error.errorType} desc=${error.description}');
+onWebResourceError: (error) {
+  print("ERROR CODE = ${error.errorCode}");
+  print("ERROR DESC = ${error.description}");
+  print("ERROR TYPE = ${error.errorType}");
 
   setState(() {
     _hasError = true;
     _errorMessage =
-        'Code: ${error.errorCode}\n${error.description}';
+        '${error.errorCode}\n${error.description}\n${error.errorType}';
     _isLoading = false;
-    _progress = 0.0;
   });
 },
           onNavigationRequest: (NavigationRequest request) {
