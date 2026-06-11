@@ -4,13 +4,14 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
   webview_flutter: ^4.13.0
+  webview_flutter_android: ^3.16.0
 
 dev_dependencies:
   flutter_test:
