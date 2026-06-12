@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,8 +17,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'مشاور همراه سینا',
       theme: ThemeData(
-        useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B)),
+        useMaterial3: true,
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF00897B),
           foregroundColor: Colors.white,
@@ -38,120 +38,109 @@ class WebViewScreen extends StatefulWidget {
 }
 
 class _WebViewScreenState extends State<WebViewScreen> {
-  late final WebViewController _controller;
-  bool _hasError = false;
+  InAppWebViewController? controller;
 
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (url) {
-            setState(() {
-              _hasError = false;
-            });
-          },
-          onPageFinished: (url) {
-            _optimizeForMobile();
-            _hideHeaderAndFooter();
-          },
-          onWebResourceError: (error) {
-            setState(() {
-              _hasError = true;
-            });
-          },
-        ),
-      )
-      ..loadRequest(
-        Uri.parse('https://www.sinapsycho.com/consult/index'),
-      );
-  }
+  bool isLoading = true;
+  bool hasError = false;
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
-        if (await _controller.canGoBack()) {
-          _controller.goBack();
+        if (controller != null) {
+          if (await controller!.canGoBack()) {
+            controller!.goBack();
+            return;
+          }
         }
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('مشاور همراه سینا'),
+          title: const Text("مشاور همراه سینا"),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () => controller?.reload(),
+            )
+          ],
         ),
-        body: _hasError
-            ? _buildFallback()
-            : WebViewWidget(controller: _controller),
-      ),
-    );
-  }
 
-  // ================= FALLBACK UI =================
-  Widget _buildFallback() {
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF00897B), Color(0xFF00695C)],
-        ),
-      ),
-      child: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        body: Stack(
           children: [
-            Icon(Icons.psychology, size: 90, color: Colors.white),
-            SizedBox(height: 20),
-            Text(
-              'موسسه تحقیقاتی سینا',
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
+            InAppWebView(
+              initialUrlRequest: URLRequest(
+                url: WebUri("https://www.sinapsycho.com/consult/index"),
               ),
+
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                userAgent:
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                useShouldOverrideUrlLoading: true,
+                mediaPlaybackRequiresUserGesture: false,
+                useHybridComposition: true,
+              ),
+
+              onWebViewCreated: (ctrl) {
+                controller = ctrl;
+              },
+
+              onLoadStart: (controller, url) {
+                setState(() {
+                  isLoading = true;
+                  hasError = false;
+                });
+              },
+
+              onLoadStop: (controller, url) async {
+                setState(() {
+                  isLoading = false;
+                });
+
+                // optional JS tweaks
+                await controller.evaluateJavascript(source: """
+                  document.querySelectorAll('header, footer').forEach(e => e.remove());
+                """);
+              },
+
+              onLoadError: (controller, url, code, message) {
+                setState(() {
+                  hasError = true;
+                  isLoading = false;
+                });
+              },
             ),
-            SizedBox(height: 10),
-            Text(
-              'در حال حاضر اتصال به سایت برقرار نیست',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70),
-            ),
+
+            // Loading indicator
+            if (isLoading)
+              const Center(
+                child: CircularProgressIndicator(
+                  color: Color(0xFF00897B),
+                ),
+              ),
+
+            // Error UI
+            if (hasError)
+              Container(
+                color: Colors.white,
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error, size: 70, color: Colors.red),
+                      SizedBox(height: 10),
+                      Text(
+                        "خطا در اتصال",
+                        style: TextStyle(fontSize: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
-  }
-
-  // ================= JS OPTIMIZER =================
-  void _optimizeForMobile() {
-    const js = '''
-      (function() {
-        var meta = document.querySelector('meta[name="viewport"]');
-        if (!meta) {
-          meta = document.createElement('meta');
-          meta.name = 'viewport';
-          document.head.appendChild(meta);
-        }
-        meta.content = 'width=device-width, initial-scale=1.0';
-      })();
-    ''';
-
-    _controller.runJavaScript(js);
-  }
-
-  void _hideHeaderAndFooter() {
-    const js = '''
-      (function() {
-        document.querySelectorAll('header, footer').forEach(el => el.style.display='none');
-      })();
-    ''';
-
-    _controller.runJavaScript(js);
   }
 }
