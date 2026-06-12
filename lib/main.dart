@@ -266,32 +266,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _initializeWebView();
   }
 
-void _initializeWebView() {
-  _controller = WebViewController()
-    ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..setNavigationDelegate(
-      NavigationDelegate(
-        onPageStarted: (String url) {
-          setState(() {
-            _isLoading = true;
-            _hasError = false;
-          });
-        },
-        onPageFinished: (String url) {
-          setState(() {
-            _isLoading = false;
-          });
-        },
-        onWebResourceError: (WebResourceError error) {
-          setState(() {
-            _hasError = true;
-            _errorMessage =
-                '${error.errorCode}\n${error.description}\n${error.errorType}';
-            _isLoading = false;
-          });
-        },
-      ),
-    )
+
 _controller = WebViewController()
   ..setJavaScriptMode(JavaScriptMode.unrestricted)
   ..setNavigationDelegate(
