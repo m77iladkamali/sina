@@ -306,33 +306,7 @@ void _initializeWebView() {
 </html>
 ''');
 }
-          onPageFinished: (String url) {
          
-            setState(() {
-              _isLoading = false;
-              _progress = 0.0;
-            });
-          },
-onWebResourceError: (error) {
-  print("ERROR CODE = ${error.errorCode}");
-  print("ERROR DESC = ${error.description}");
-  print("ERROR TYPE = ${error.errorType}");
-
-  setState(() {
-    _hasError = true;
-    _errorMessage =
-        '${error.errorCode}\n${error.description}\n${error.errorType}';
-    _isLoading = false;
-  });
-},
-          onNavigationRequest: (NavigationRequest request) {
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse('https://google.com'));
-  }
-
   void _optimizeForMobile() {
     // نمایش عکس مشاوران در جای درست - بدون تداخل با متن
     String optimizeJS = '''
