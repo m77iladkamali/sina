@@ -287,8 +287,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
             });
           },
           onPageFinished: (String url) {
-            _hideHeaderAndFooter();
-            _optimizeForMobile();
+         
             setState(() {
               _isLoading = false;
               _progress = 0.0;
