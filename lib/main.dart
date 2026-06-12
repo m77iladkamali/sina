@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,20 +32,17 @@ class _WebScreenState extends State<WebScreen> {
   bool loading = true;
   bool error = false;
 
-  final url = Uri.parse("https://www.sinapsycho.com/consult/index");
-
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
         if (controller != null) {
-          bool canBack = await controller!.canGoBack();
-          if (canBack) {
+          if (await controller!.canGoBack()) {
             controller!.goBack();
             return false;
           }
         }
-        return false; // ❌ خروج از برنامه ممنوع
+        return false; // ❌ خروج از اپ ممنوع
       },
       child: Scaffold(
         appBar: AppBar(
@@ -54,9 +51,7 @@ class _WebScreenState extends State<WebScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: () {
-                controller?.reload();
-              },
+              onPressed: () => controller?.reload(),
             )
           ],
         ),
@@ -64,18 +59,17 @@ class _WebScreenState extends State<WebScreen> {
         body: Stack(
           children: [
 
-            // 🌐 WEB
+            // 🌐 WEBVIEW
             InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri.uri(url)),
+              initialUrlRequest: URLRequest(
+                url: WebUri("https://www.sinapsycho.com/consult/index"),
+              ),
 
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
+                useHybridComposition: true,
                 userAgent:
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-                useShouldOverrideUrlLoading: true,
-                mediaPlaybackRequiresUserGesture: false,
-                supportZoom: true,
-                useHybridComposition: true,
               ),
 
               onWebViewCreated: (c) {
@@ -97,38 +91,55 @@ class _WebScreenState extends State<WebScreen> {
 
               onLoadError: (c, url, code, message) {
                 setState(() {
-                  error = true;
                   loading = false;
+                  error = true;
                 });
-              },
-
-              shouldOverrideUrlLoading: (controller, nav) async {
-                return NavigationActionPolicy.ALLOW;
               },
             ),
 
-            // 🔄 LOADING
-            if (loading)
-              const Center(
-                child: CircularProgressIndicator(),
+            // 🟢 صفحه برند (بدون دایره لودینگ)
+            AnimatedOpacity(
+              opacity: loading ? 1 : 0,
+              duration: const Duration(milliseconds: 400),
+              child: Container(
+                color: const Color(0xFF00897B),
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.psychology, size: 90, color: Colors.white),
+                      SizedBox(height: 20),
+                      Text(
+                        "مشاور همراه سینا",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      Text(
+                        "در حال اتصال...",
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
+            ),
 
-            // ❌ ERROR SCREEN
+            // ❌ صفحه خطا
             if (error)
-              Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.cloud_off, size: 60, color: Colors.red),
-                    const SizedBox(height: 10),
-                    const Text("ارتباط قطع شد"),
-                    ElevatedButton(
-                      onPressed: () {
-                        controller?.reload();
-                      },
-                      child: const Text("تلاش مجدد"),
-                    )
-                  ],
+              Container(
+                color: Colors.white,
+                child: const Center(
+                  child: Text(
+                    "خطا در ارتباط با سرور",
+                    style: TextStyle(fontSize: 16),
+                  ),
                 ),
               ),
           ],
