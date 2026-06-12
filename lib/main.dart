@@ -269,6 +269,29 @@ class _WebViewScreenState extends State<WebViewScreen> {
 void _initializeWebView() {
   _controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
+    ..setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (String url) {
+          setState(() {
+            _isLoading = true;
+            _hasError = false;
+          });
+        },
+        onPageFinished: (String url) {
+          setState(() {
+            _isLoading = false;
+          });
+        },
+        onWebResourceError: (WebResourceError error) {
+          setState(() {
+            _hasError = true;
+            _errorMessage =
+                '${error.errorCode}\n${error.description}\n${error.errorType}';
+            _isLoading = false;
+          });
+        },
+      ),
+    )
     ..loadHtmlString('''
 <!DOCTYPE html>
 <html>
@@ -277,16 +300,11 @@ void _initializeWebView() {
 <title>Test</title>
 </head>
 <body>
-  <h1>Hello WebView</h1>
-  <p>Test OK</p>
+<h1>Hello WebView</h1>
+<p>Test OK</p>
 </body>
 </html>
 ''');
-
-  setState(() {
-    _isLoading = false;
-    _hasError = false;
-  });
 }
           onPageFinished: (String url) {
          
