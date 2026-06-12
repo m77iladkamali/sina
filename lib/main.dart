@@ -1,70 +1,63 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_custom_tabs/flutter_custom_tabs.dart';
 
-class WebViewScreen extends StatefulWidget {
-  const WebViewScreen({super.key});
-
-  @override
-  State<WebViewScreen> createState() => _WebViewScreenState();
+void main() {
+  runApp(const MyApp());
 }
 
-class _WebViewScreenState extends State<WebViewScreen> {
-  InAppWebViewController? controller;
-  double progress = 0;
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: HomeScreen(),
+    );
+  }
+}
+
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  final String url = "https://www.sinapsycho.com/consult/index";
+
+  Future<void> openCustomTab(BuildContext context) async {
+    try {
+      await launchUrl(
+        Uri.parse(url),
+        customTabsOptions: CustomTabsOptions(
+          colorSchemes: CustomTabsColorSchemes.defaults(
+            toolbarColor: const Color(0xFF00897B),
+          ),
+          showTitle: true,
+        ),
+        safariVCOptions: const SafariViewControllerOptions(
+          barCollapsingEnabled: true,
+        ),
+      );
+    } catch (e) {
+      debugPrint("Error opening Chrome Tab: $e");
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("مشاور همراه سینا"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => controller?.reload(),
-          )
-        ],
+        backgroundColor: const Color(0xFF00897B),
       ),
-      body: Stack(
-        children: [
-          InAppWebView(
-            initialUrlRequest: URLRequest(
-              url: WebUri("https://www.sinapsycho.com/consult/index"),
-            ),
-
-            initialSettings: InAppWebViewSettings(
-              javaScriptEnabled: true,
-              userAgent:
-                  "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-              useShouldOverrideUrlLoading: true,
-              mediaPlaybackRequiresUserGesture: false,
-            ),
-
-            onWebViewCreated: (ctrl) {
-              controller = ctrl;
-            },
-
-            onProgressChanged: (ctrl, p) {
-              setState(() {
-                progress = p / 100;
-              });
-            },
-
-            onLoadStart: (ctrl, url) {},
-
-            onLoadStop: (ctrl, url) {
-              setState(() {
-                progress = 0;
-              });
-            },
-
-            shouldOverrideUrlLoading: (controller, navigationAction) async {
-              return NavigationActionPolicy.ALLOW;
-            },
+      body: Center(
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00897B),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
           ),
-
-          if (progress < 1.0)
-            LinearProgressIndicator(value: progress),
-        ],
+          onPressed: () => openCustomTab(context),
+          child: const Text("ورود به سایت"),
+        ),
       ),
     );
   }
