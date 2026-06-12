@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_custom_tabs/flutter_custom_tabs.dart';
+import 'dart:async';
 
 void main() {
   runApp(const MyApp());
@@ -12,17 +13,32 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomeScreen(),
+      home: SplashScreen(),
     );
   }
 }
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+/// ---------------- SPLASH SCREEN ----------------
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
 
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
   final String url = "https://www.sinapsycho.com/consult/index";
 
-  Future<void> openCustomTab(BuildContext context) async {
+  @override
+  void initState() {
+    super.initState();
+
+    Future.delayed(const Duration(seconds: 2), () {
+      _openSite();
+    });
+  }
+
+  Future<void> _openSite() async {
     try {
       await launchUrl(
         Uri.parse(url),
@@ -37,26 +53,31 @@ class HomeScreen extends StatelessWidget {
         ),
       );
     } catch (e) {
-      debugPrint("Error opening Chrome Tab: $e");
+      debugPrint("Error opening Custom Tab: $e");
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("مشاور همراه سینا"),
-        backgroundColor: const Color(0xFF00897B),
-      ),
-      body: Center(
-        child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF00897B),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-          ),
-          onPressed: () => openCustomTab(context),
-          child: const Text("ورود به سایت"),
+      backgroundColor: const Color(0xFF00897B),
+      body: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.psychology, size: 90, color: Colors.white),
+            SizedBox(height: 20),
+            Text(
+              "مشاور همراه سینا",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 10),
+            CircularProgressIndicator(color: Colors.white),
+          ],
         ),
       ),
     );
