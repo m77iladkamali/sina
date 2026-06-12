@@ -266,26 +266,28 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _initializeWebView();
   }
 
-  void _initializeWebView() {
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      // User-Agent دسکتاپ برای دریافت HTML کامل با عکس مشاوران
-      // سایت بر اساس User-Agent موبایل، عکس‌ها رو از HTML حذف می‌کنه
-	
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() {
-              _isLoading = true;
-              _hasError = false;
-              _progress = 0.0;
-            });
-          },
-          onProgress: (int progress) {
-            setState(() {
-              _progress = progress / 100.0;
-            });
-          },
+void _initializeWebView() {
+  _controller = WebViewController()
+    ..setJavaScriptMode(JavaScriptMode.unrestricted)
+    ..loadHtmlString('''
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Test</title>
+</head>
+<body>
+  <h1>Hello WebView</h1>
+  <p>Test OK</p>
+</body>
+</html>
+''');
+
+  setState(() {
+    _isLoading = false;
+    _hasError = false;
+  });
+}
           onPageFinished: (String url) {
          
             setState(() {
