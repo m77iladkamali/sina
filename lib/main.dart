@@ -292,19 +292,18 @@ void _initializeWebView() {
         },
       ),
     )
-    ..loadHtmlString('''
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Test</title>
-</head>
-<body>
-<h1>Hello WebView</h1>
-<p>Test OK</p>
-</body>
-</html>
-''');
+_controller = WebViewController()
+  ..setJavaScriptMode(JavaScriptMode.unrestricted)
+  ..setNavigationDelegate(
+    NavigationDelegate(
+      onWebResourceError: (error) {
+        print(error.description);
+      },
+    ),
+  )
+  ..loadRequest(
+    Uri.parse('https://example.com'),
+  );
 }
          
   void _optimizeForMobile() {
