@@ -266,56 +266,52 @@ class _WebViewScreenState extends State<WebViewScreen> {
     _initializeWebView();
   }
 
-  void _initializeWebView() {
-   _controller = WebViewController()
-  ..setJavaScriptMode(JavaScriptMode.unrestricted)
-  ..setBackgroundColor(const Color(0x00000000))
-      // User-Agent دسکتاپ برای دریافت HTML کامل با عکس مشاوران
-      // سایت بر اساس User-Agent موبایل، عکس‌ها رو از HTML حذف می‌کنه
-   ..setUserAgent(
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-)
-
-..setNavigationDelegate(...)
-..enableZoom(true);
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (String url) {
-            setState(() {
-              _isLoading = true;
-              _hasError = false;
-              _progress = 0.0;
-            });
-          },
-          onProgress: (int progress) {
-            setState(() {
-              _progress = progress / 100.0;
-            });
-          },
-          onPageFinished: (String url) {
-            _hideHeaderAndFooter();
-            _optimizeForMobile();
-            setState(() {
-              _isLoading = false;
-              _progress = 0.0;
-            });
-          },
-          onWebResourceError: (WebResourceError error) {
-            setState(() {
-              _hasError = true;
-              _errorMessage = error.description;
-              _isLoading = false;
-              _progress = 0.0;
-            });
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse('https://www.sinapsycho.com/consult/index'));
-  }
-
+ void _initializeWebView() {
+  _controller = WebViewController()
+    ..setJavaScriptMode(JavaScriptMode.unrestricted)
+    ..setBackgroundColor(const Color(0x00000000))
+    ..setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    )
+    ..setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (String url) {
+          setState(() {
+            _isLoading = true;
+            _hasError = false;
+            _progress = 0.0;
+          });
+        },
+        onProgress: (int progress) {
+          setState(() {
+            _progress = progress / 100.0;
+          });
+        },
+        onPageFinished: (String url) {
+          _hideHeaderAndFooter();
+          _optimizeForMobile();
+          setState(() {
+            _isLoading = false;
+            _progress = 0.0;
+          });
+        },
+        onWebResourceError: (WebResourceError error) {
+          setState(() {
+            _hasError = true;
+            _errorMessage = error.description;
+            _isLoading = false;
+            _progress = 0.0;
+          });
+        },
+        onNavigationRequest: (NavigationRequest request) {
+          return NavigationDecision.navigate;
+        },
+      ),
+    )
+    ..loadRequest(
+      Uri.parse('https://www.sinapsycho.com/consult/index'),
+    );
+}
   void _optimizeForMobile() {
     // نمایش عکس مشاوران در جای درست - بدون تداخل با متن
     String optimizeJS = '''
