@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
   runApp(const MyApp());
 }
 
@@ -14,14 +10,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'مشاور همراه سینا',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B)),
-        useMaterial3: true,
-      ),
-      home: const WebViewScreen(),
+      home: WebViewScreen(),
     );
   }
 }
@@ -36,9 +27,8 @@ class WebViewScreen extends StatefulWidget {
 class _WebViewScreenState extends State<WebViewScreen> {
   late final WebViewController _controller;
 
-  bool _isLoading = true;
-  bool _hasError = false;
-  String _errorMessage = '';
+  bool loading = true;
+  bool error = false;
 
   @override
   void initState() {
@@ -46,35 +36,77 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+
+      // مهم‌ترین بخش bypass
+      ..setUserAgent(
+        "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+      )
+
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (url) {
             setState(() {
-              _isLoading = true;
-              _hasError = false;
+              loading = true;
+              error = false;
             });
           },
           onPageFinished: (url) {
             setState(() {
-              _isLoading = false;
+              loading = false;
+            });
+
+            _injectFixes();
+          },
+          onWebResourceError: (e) {
+            setState(() {
+              error = true;
+              loading = false;
             });
           },
-          onWebResourceError: (error) {
-            setState(() {
-              _hasError = true;
-              _errorMessage = error.description;
-              _isLoading = false;
-            });
+          onNavigationRequest: (request) {
+            return NavigationDecision.navigate;
           },
         ),
       )
-      ..loadRequest(Uri.parse('https://www.sinapsycho.com/consult/index'));
+
+      // مهم: cookie + localStorage
+      ..enableZoom(true)
+      ..loadRequest(Uri.parse("https://www.sinapsycho.com/consult/index"));
+  }
+
+  void _injectFixes() {
+    const js = """
+      (function () {
+        // رفع viewport
+        var meta = document.querySelector('meta[name=viewport]');
+        if (!meta) {
+          meta = document.createElement('meta');
+          document.head.appendChild(meta);
+        }
+        meta.content = "width=device-width, initial-scale=1.0";
+
+        // اجازه اجرای iframe ها
+        var iframes = document.querySelectorAll('iframe');
+        iframes.forEach(function(i){
+          i.style.display = "block";
+        });
+
+        // حذف overlay های بلاک کننده
+        document.querySelectorAll('*').forEach(function(el){
+          if (el.style && (el.style.position === 'fixed')) {
+            el.style.pointerEvents = 'auto';
+          }
+        });
+      })();
+    """;
+
+    _controller.runJavaScript(js);
   }
 
   void _retry() {
     setState(() {
-      _hasError = false;
-      _isLoading = true;
+      loading = true;
+      error = false;
     });
     _controller.reload();
   }
@@ -83,8 +115,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('مشاور همراه سینا'),
-        backgroundColor: const Color(0xFF00897B),
+        title: const Text("WebView"),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -94,29 +125,24 @@ class _WebViewScreenState extends State<WebViewScreen> {
       ),
       body: Stack(
         children: [
-          if (!_hasError)
-            WebViewWidget(controller: _controller),
+          WebViewWidget(controller: _controller),
 
-          if (_hasError)
+          if (loading)
+            const Center(child: CircularProgressIndicator()),
+
+          if (error)
             Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error, color: Colors.red, size: 60),
+                  const Text("خطا در لود"),
                   const SizedBox(height: 10),
-                  Text(_errorMessage),
-                  const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: _retry,
                     child: const Text("تلاش مجدد"),
                   )
                 ],
               ),
-            ),
-
-          if (_isLoading)
-            const Center(
-              child: CircularProgressIndicator(),
             ),
         ],
       ),
