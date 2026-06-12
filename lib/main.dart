@@ -1,6 +1,7 @@
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,139 +13,57 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: WebScreen(),
+      home: const WebViewScreen(),
     );
   }
 }
 
-class WebScreen extends StatefulWidget {
-  const WebScreen({super.key});
+class WebViewScreen extends StatefulWidget {
+  const WebViewScreen({super.key});
 
   @override
-  State<WebScreen> createState() => _WebScreenState();
+  State<WebViewScreen> createState() => _WebViewScreenState();
 }
 
-class _WebScreenState extends State<WebScreen> {
-  InAppWebViewController? controller;
+class _WebViewScreenState extends State<WebViewScreen> {
+  late final WebViewController _controller;
+  double progress = 0;
 
-  bool loading = true;
-  bool error = false;
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent(
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137.0.0.0 Safari/537.36')
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (p) {
+            setState(() => progress = p / 100);
+          },
+        ),
+      )
+      ..loadRequest(
+        Uri.parse('https://www.sinapsycho.com/consult/index'),
+      );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (controller != null) {
-          if (await controller!.canGoBack()) {
-            controller!.goBack();
-            return false;
-          }
-        }
-        return false; // ❌ خروج از اپ ممنوع
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF00897B),
-          title: const Text("مشاور همراه سینا"),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => controller?.reload(),
-            )
-          ],
-        ),
-
-        body: Stack(
-          children: [
-
-            // 🌐 WEBVIEW
-            InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri("https://www.sinapsycho.com/consult/index"),
-              ),
-
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                useHybridComposition: true,
-                userAgent:
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-              ),
-
-              onWebViewCreated: (c) {
-                controller = c;
-              },
-
-              onLoadStart: (c, url) {
-                setState(() {
-                  loading = true;
-                  error = false;
-                });
-              },
-
-              onLoadStop: (c, url) async {
-                setState(() {
-                  loading = false;
-                });
-              },
-
-              onLoadError: (c, url, code, message) {
-                setState(() {
-                  loading = false;
-                  error = true;
-                });
-              },
-            ),
-
-            // 🟢 صفحه برند (بدون دایره لودینگ)
-            AnimatedOpacity(
-              opacity: loading ? 1 : 0,
-              duration: const Duration(milliseconds: 400),
-              child: Container(
-                color: const Color(0xFF00897B),
-                child: const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.psychology, size: 90, color: Colors.white),
-                      SizedBox(height: 20),
-                      Text(
-                        "مشاور همراه سینا",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 10),
-                      Text(
-                        "در حال اتصال...",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            // ❌ صفحه خطا
-            if (error)
-              Container(
-                color: Colors.white,
-                child: const Center(
-                  child: Text(
-                    "خطا در ارتباط با سرور",
-                    style: TextStyle(fontSize: 16),
-                  ),
-                ),
-              ),
-          ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('مشاور همراه سینا'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(4),
+          child: progress > 0 && progress < 1
+              ? LinearProgressIndicator(value: progress)
+              : const SizedBox(height: 4),
         ),
       ),
+      body: WebViewWidget(controller: _controller),
     );
   }
 }
