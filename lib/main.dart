@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
   runApp(const MyApp());
 }
 
@@ -15,135 +12,121 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'مشاور همراه سینا',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B)),
-        useMaterial3: true,
-      ),
-      home: const WebViewScreen(),
+      home: WebScreen(),
     );
   }
 }
 
-class WebViewScreen extends StatefulWidget {
-  const WebViewScreen({super.key});
+class WebScreen extends StatefulWidget {
+  const WebScreen({super.key});
 
   @override
-  State<WebViewScreen> createState() => _WebViewScreenState();
+  State<WebScreen> createState() => _WebScreenState();
 }
 
-class _WebViewScreenState extends State<WebViewScreen> {
-  late final WebViewController _controller;
+class _WebScreenState extends State<WebScreen> {
+  InAppWebViewController? controller;
 
-  bool _isLoading = true;
-  bool _hasError = false;
+  bool loading = true;
+  bool error = false;
 
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-
-      // مهم: بعضی سایت‌ها با موبایل بلاک می‌کنند
-      ..setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-      )
-
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) {
-            setState(() {
-              _isLoading = true;
-              _hasError = false;
-            });
-          },
-          onPageFinished: (_) {
-            setState(() {
-              _isLoading = false;
-            });
-          },
-          onWebResourceError: (error) {
-            setState(() {
-              _hasError = true;
-              _isLoading = false;
-            });
-          },
-        ),
-      )
-
-      ..loadRequest(
-        Uri.parse('https://www.sinapsycho.com/consult/index'),
-      );
-  }
-
-  Future<bool> _onWillPop() async {
-    // ❌ خروج از برنامه ممنوع
-    if (await _controller.canGoBack()) {
-      _controller.goBack();
-      return false;
-    }
-    return false;
-  }
-
-  void _retry() {
-    setState(() {
-      _hasError = false;
-      _isLoading = true;
-    });
-    _controller.reload();
-  }
+  final url = Uri.parse("https://www.sinapsycho.com/consult/index");
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        await _onWillPop();
+    return WillPopScope(
+      onWillPop: () async {
+        if (controller != null) {
+          bool canBack = await controller!.canGoBack();
+          if (canBack) {
+            controller!.goBack();
+            return false;
+          }
+        }
+        return false; // ❌ خروج از برنامه ممنوع
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('مشاور همراه سینا'),
           backgroundColor: const Color(0xFF00897B),
-          foregroundColor: Colors.white,
+          title: const Text("مشاور همراه سینا"),
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _retry,
+              onPressed: () {
+                controller?.reload();
+              },
             )
           ],
         ),
 
         body: Stack(
           children: [
-            // WEBVIEW
-            if (!_hasError)
-              WebViewWidget(controller: _controller),
 
-            // LOADING (خیلی ساده و بدون گیر)
-            if (_isLoading && !_hasError)
+            // 🌐 WEB
+            InAppWebView(
+              initialUrlRequest: URLRequest(url: WebUri.uri(url)),
+
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                userAgent:
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                useShouldOverrideUrlLoading: true,
+                mediaPlaybackRequiresUserGesture: false,
+                supportZoom: true,
+                useHybridComposition: true,
+              ),
+
+              onWebViewCreated: (c) {
+                controller = c;
+              },
+
+              onLoadStart: (c, url) {
+                setState(() {
+                  loading = true;
+                  error = false;
+                });
+              },
+
+              onLoadStop: (c, url) async {
+                setState(() {
+                  loading = false;
+                });
+              },
+
+              onLoadError: (c, url, code, message) {
+                setState(() {
+                  error = true;
+                  loading = false;
+                });
+              },
+
+              shouldOverrideUrlLoading: (controller, nav) async {
+                return NavigationActionPolicy.ALLOW;
+              },
+            ),
+
+            // 🔄 LOADING
+            if (loading)
               const Center(
                 child: CircularProgressIndicator(),
               ),
 
-            // ERROR SCREEN
-            if (_hasError)
+            // ❌ ERROR SCREEN
+            if (error)
               Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.wifi_off, size: 60, color: Colors.red),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'خطا در لود صفحه',
-                      style: TextStyle(fontSize: 18),
-                    ),
-                    const SizedBox(height: 12),
+                    const Icon(Icons.cloud_off, size: 60, color: Colors.red),
+                    const SizedBox(height: 10),
+                    const Text("ارتباط قطع شد"),
                     ElevatedButton(
-                      onPressed: _retry,
-                      child: const Text('تلاش مجدد'),
+                      onPressed: () {
+                        controller?.reload();
+                      },
+                      child: const Text("تلاش مجدد"),
                     )
                   ],
                 ),
