@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const MyApp());
 }
 
@@ -10,9 +13,19 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: WebViewScreen(),
+      title: 'مشاور همراه سینا',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00897B)),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF00897B),
+          foregroundColor: Colors.white,
+          centerTitle: true,
+        ),
+      ),
+      home: const WebViewScreen(),
     );
   }
 }
@@ -26,9 +39,7 @@ class WebViewScreen extends StatefulWidget {
 
 class _WebViewScreenState extends State<WebViewScreen> {
   late final WebViewController _controller;
-
-  bool loading = true;
-  bool error = false;
+  bool _hasError = false;
 
   @override
   void initState() {
@@ -36,116 +47,111 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-
-      // مهم‌ترین بخش bypass
-      ..setUserAgent(
-        "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
-      )
-
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (url) {
             setState(() {
-              loading = true;
-              error = false;
+              _hasError = false;
             });
           },
           onPageFinished: (url) {
-            setState(() {
-              loading = false;
-            });
-
-            _injectFixes();
+            _optimizeForMobile();
+            _hideHeaderAndFooter();
           },
-          onWebResourceError: (e) {
+          onWebResourceError: (error) {
             setState(() {
-              error = true;
-              loading = false;
+              _hasError = true;
             });
-          },
-          onNavigationRequest: (request) {
-            return NavigationDecision.navigate;
           },
         ),
       )
-
-      // مهم: cookie + localStorage
-      ..enableZoom(true)
-      ..loadRequest(Uri.parse("https://www.sinapsycho.com/consult/index"));
-  }
-
-  void _injectFixes() {
-    const js = """
-      (function () {
-        // رفع viewport
-        var meta = document.querySelector('meta[name=viewport]');
-        if (!meta) {
-          meta = document.createElement('meta');
-          document.head.appendChild(meta);
-        }
-        meta.content = "width=device-width, initial-scale=1.0";
-
-        // اجازه اجرای iframe ها
-        var iframes = document.querySelectorAll('iframe');
-        iframes.forEach(function(i){
-          i.style.display = "block";
-        });
-
-        // حذف overlay های بلاک کننده
-        document.querySelectorAll('*').forEach(function(el){
-          if (el.style && (el.style.position === 'fixed')) {
-            el.style.pointerEvents = 'auto';
-          }
-        });
-      })();
-    """;
-
-    _controller.runJavaScript(js);
-  }
-
-  void _retry() {
-    setState(() {
-      loading = true;
-      error = false;
-    });
-    _controller.reload();
+      ..loadRequest(
+        Uri.parse('https://www.sinapsycho.com/consult/index'),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("WebView"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => _controller.reload(),
-          )
-        ],
-      ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-
-          if (loading)
-            const Center(child: CircularProgressIndicator()),
-
-          if (error)
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text("خطا در لود"),
-                  const SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: _retry,
-                    child: const Text("تلاش مجدد"),
-                  )
-                ],
-              ),
-            ),
-        ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (await _controller.canGoBack()) {
+          _controller.goBack();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('مشاور همراه سینا'),
+        ),
+        body: _hasError
+            ? _buildFallback()
+            : WebViewWidget(controller: _controller),
       ),
     );
+  }
+
+  // ================= FALLBACK UI =================
+  Widget _buildFallback() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF00897B), Color(0xFF00695C)],
+        ),
+      ),
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.psychology, size: 90, color: Colors.white),
+            SizedBox(height: 20),
+            Text(
+              'موسسه تحقیقاتی سینا',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            SizedBox(height: 10),
+            Text(
+              'در حال حاضر اتصال به سایت برقرار نیست',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ================= JS OPTIMIZER =================
+  void _optimizeForMobile() {
+    const js = '''
+      (function() {
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+          meta = document.createElement('meta');
+          meta.name = 'viewport';
+          document.head.appendChild(meta);
+        }
+        meta.content = 'width=device-width, initial-scale=1.0';
+      })();
+    ''';
+
+    _controller.runJavaScript(js);
+  }
+
+  void _hideHeaderAndFooter() {
+    const js = '''
+      (function() {
+        document.querySelectorAll('header, footer').forEach(el => el.style.display='none');
+      })();
+    ''';
+
+    _controller.runJavaScript(js);
   }
 }
