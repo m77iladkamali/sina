@@ -269,10 +269,10 @@ class _WebViewScreenState extends State<WebViewScreen> {
  void _initializeWebView() {
   _controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..setBackgroundColor(const Color(0x00000000))
-    ..setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    )
+     ..setBackgroundColor(const Color(0xFFFFFFFF))
+..setUserAgent(
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+)
     ..setNavigationDelegate(
       NavigationDelegate(
         onPageStarted: (String url) {
