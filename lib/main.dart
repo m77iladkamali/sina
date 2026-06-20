@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_custom_tabs/flutter_custom_tabs.dart';
-import 'dart:async';
+import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.edgeToEdge,
+  );
+
   runApp(const MyApp());
 }
 
@@ -13,71 +19,68 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: SplashScreen(),
+      home: BrowserPage(),
     );
   }
 }
 
-/// ---------------- SPLASH SCREEN ----------------
-class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+class BrowserPage extends StatefulWidget {
+  const BrowserPage({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  State<BrowserPage> createState() => _BrowserPageState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
-  final String url = "https://www.sinapsycho.com/consult/index";
-
-  @override
-  void initState() {
-    super.initState();
-
-    Future.delayed(const Duration(seconds: 2), () {
-      _openSite();
-    });
-  }
-
-  Future<void> _openSite() async {
-    try {
-      await launchUrl(
-        Uri.parse(url),
-        customTabsOptions: CustomTabsOptions(
-          colorSchemes: CustomTabsColorSchemes.defaults(
-            toolbarColor: const Color(0xFF00897B),
-          ),
-          showTitle: true,
-        ),
-        safariVCOptions: const SafariViewControllerOptions(
-          barCollapsingEnabled: true,
-        ),
-      );
-    } catch (e) {
-      debugPrint("Error opening Custom Tab: $e");
-    }
-  }
+class _BrowserPageState extends State<BrowserPage> {
+  InAppWebViewController? controller;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF00897B),
-      body: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.psychology, size: 90, color: Colors.white),
-            SizedBox(height: 20),
-            Text(
-              "مشاور همراه سینا",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (controller != null &&
+            await controller!.canGoBack()) {
+          controller!.goBack();
+        } else {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF00897B),
+        body: SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: const Color(0xFF00897B),
+                width: 2,
               ),
             ),
-            SizedBox(height: 10),
-            CircularProgressIndicator(color: Colors.white),
-          ],
+            child: InAppWebView(
+              initialUrlRequest: URLRequest(
+                url: WebUri(
+                  "https://www.sinapsycho.com/consultAndroid/index",
+                ),
+              ),
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                domStorageEnabled: true,
+                databaseEnabled: true,
+                cacheEnabled: true,
+                supportZoom: false,
+                allowsInlineMediaPlayback: true,
+                thirdPartyCookiesEnabled: true,
+                useShouldOverrideUrlLoading: true,
+
+                userAgent:
+                    "Mozilla/5.0 (Linux; Android 14; SM-A256E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+              ),
+              onWebViewCreated: (c) {
+                controller = c;
+              },
+            ),
+          ),
         ),
       ),
     );
