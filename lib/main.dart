@@ -4,11 +4,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  SystemChrome.setEnabledSystemUIMode(
-    SystemUiMode.edgeToEdge,
-  );
-
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const MyApp());
 }
 
@@ -39,8 +35,7 @@ class _BrowserPageState extends State<BrowserPage> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
-        if (controller != null &&
-            await controller!.canGoBack()) {
+        if (controller != null && await controller!.canGoBack()) {
           controller!.goBack();
         } else {
           SystemNavigator.pop();
@@ -52,16 +47,11 @@ class _BrowserPageState extends State<BrowserPage> {
           child: Container(
             margin: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              border: Border.all(
-                color: const Color(0xFF00897B),
-                width: 2,
-              ),
+              border: Border.all(color: const Color(0xFF00897B), width: 2),
             ),
             child: InAppWebView(
               initialUrlRequest: URLRequest(
-                url: WebUri(
-                  "https://www.sinapsycho.com/consultAndroid/index",
-                ),
+                url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
               ),
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
@@ -71,8 +61,7 @@ class _BrowserPageState extends State<BrowserPage> {
                 supportZoom: false,
                 allowsInlineMediaPlayback: true,
                 thirdPartyCookiesEnabled: true,
-                useShouldOverrideUrlLoading: true,
-
+                // useShouldOverrideUrlLoading حذف شد
                 userAgent:
                     "Mozilla/5.0 (Linux; Android 14; SM-A256E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
               ),
