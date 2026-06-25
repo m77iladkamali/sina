@@ -25,6 +25,6 @@ flutter:
     - assets/images/logo.png
 
   fonts:
-    - family: BNazanin
+    - family: B-NAZANIN
       fonts:
-        - asset: assets/fonts/BNazanin.ttf
+        - asset: assets/fonts/B-NAZANIN.ttf
