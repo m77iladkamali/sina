@@ -22,7 +22,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/images/logo.png
+    - assets/images/sina.jpeg
 
   fonts:
     - family: B-NAZANIN
