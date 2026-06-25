@@ -20,5 +20,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
   assets:
-    - assets/images/
+    - assets/images/logo.png
+
+  fonts:
+    - family: BNazanin
+      fonts:
+        - asset: assets/fonts/BNazanin.ttf
