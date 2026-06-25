@@ -51,7 +51,7 @@ class _BrowserPageState extends State<BrowserPage> {
             ),
             child: InAppWebView(
               initialUrlRequest: URLRequest(
-                url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
+                url: WebUri("https://www.sinapsycho.com/PsychometricAndroid/index"),
               ),
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
