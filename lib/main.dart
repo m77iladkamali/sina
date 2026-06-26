@@ -168,7 +168,7 @@ class _WelcomePageState extends State<WelcomePage>
 
                     child: Text(
 
-                      "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
+                      "به بخش مشاوره غیرحضوری سینا\n.خوش آمدید",
 
                       textAlign: TextAlign.center,
 
@@ -206,22 +206,29 @@ class _WelcomePageState extends State<WelcomePage>
                                     ScaleTransition(
 
                     scale: _scale,
-
-                    child: SizedBox(
-
-                      width: 330,
-
-                      height: 330,
-
-                      child: Image.asset(
-
-                        "assets/images/sina.png",
-
-                        fit: BoxFit.contain,
-
-                      ),
-
-                    ),
+child: Container(
+  width: 300,
+  height: 300,
+  decoration: BoxDecoration(
+    color: Colors.white,
+    shape: BoxShape.circle,
+    boxShadow: const [
+      BoxShadow(
+        color: Colors.black26,
+        blurRadius: 20,
+        spreadRadius: 2,
+        offset: Offset(0, 8),
+      ),
+    ],
+  ),
+  child: Padding(
+    padding: const EdgeInsets.all(24),
+    child: Image.asset(
+      "assets/images/sina.png",
+      fit: BoxFit.contain,
+    ),
+  ),
+),
 
                   ),
 
@@ -233,7 +240,7 @@ class _WelcomePageState extends State<WelcomePage>
 
                     child: Text(
 
-                      "اینجا محیطی امن و راحت\nبرای یاری شماست",
+                      "اینجا محیطی امن و راحت\n.برای یاری شماست",
 
                       textAlign: TextAlign.center,
 
