@@ -176,7 +176,7 @@ class _WelcomePageState extends State<WelcomePage>
 
                         color: Colors.white,
 
-                        fontSize: 34,
+                        fontSize: 30,
 
                         fontWeight: FontWeight.bold,
 
