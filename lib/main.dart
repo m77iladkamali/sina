@@ -96,7 +96,7 @@ class _WelcomePageState extends State<WelcomePage>
         child: SafeArea(
           child: Column(
             children: [
-              const SizedBox(height: 35),
+              const SizedBox(height: 55),
 
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
@@ -105,7 +105,7 @@ class _WelcomePageState extends State<WelcomePage>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 30,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.normal,
                     color: Colors.white,
                     height: 1.3,
                   ),
@@ -126,7 +126,7 @@ class _WelcomePageState extends State<WelcomePage>
                 ),
               ),
 
-              const Spacer(),
+              const SizedBox(height: 25),
                             const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
@@ -134,7 +134,7 @@ class _WelcomePageState extends State<WelcomePage>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 24,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.normal,
                     color: Colors.white,
                     height: 1.5,
                   ),
@@ -396,7 +396,7 @@ class _BrowserPageState extends State<BrowserPage> {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 28,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.normal,
                           ),
                         ),
 
