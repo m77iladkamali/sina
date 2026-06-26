@@ -417,44 +417,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     return NavigationActionPolicy.ALLOW;
                   },
                 ),
-                                shouldOverrideUrlLoading:
-                      (controller, navigationAction) async {
-
-                    final uri = navigationAction.request.url;
-
-                    if (uri == null) {
-                      return NavigationActionPolicy.ALLOW;
-                    }
-
-                    return NavigationActionPolicy.ALLOW;
-                  },
-
-                  onReceivedError: (controller, request, error) {
-
-                    if (!mounted) return;
-
-                    setState(() {
-                      progress = 1;
-                    });
-
-                  },
-
-                  onReceivedHttpError:
-                      (controller, request, response) {
-
-                    if (!mounted) return;
-
-                    setState(() {
-                      progress = 1;
-                    });
-
-                  },
-
-                  onConsoleMessage: (controller, message) {
-                    debugPrint(message.message);
-                  },
-
-                ),
+              
 
               ////////////////////////////////////////////////////
               /// نمایش خطای اینترنت
