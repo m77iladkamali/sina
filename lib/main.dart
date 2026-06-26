@@ -33,9 +33,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
 /// صفحه خوش آمدگویی
-////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -46,6 +46,7 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage>
     with SingleTickerProviderStateMixin {
+
   late AnimationController _animationController;
 
   late Animation<double> _scale;
@@ -80,9 +81,13 @@ class _WelcomePageState extends State<WelcomePage>
 
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
+
       body: Container(
+
         width: double.infinity,
+
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -93,9 +98,13 @@ class _WelcomePageState extends State<WelcomePage>
             ],
           ),
         ),
+
         child: SafeArea(
+
           child: Column(
+
             children: [
+
               const SizedBox(height: 55),
 
               const Padding(
@@ -144,8 +153,8 @@ class _WelcomePageState extends State<WelcomePage>
               const SizedBox(height: 25),
 
               SizedBox(
-                width: 220,
-                height: 58,
+                width: 180,
+                height: 56,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff23C66F),
@@ -166,8 +175,8 @@ class _WelcomePageState extends State<WelcomePage>
                   child: const Text(
                     "ورود",
                     style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 22,
+                      fontWeight: FontWeight.normal,
                     ),
                   ),
                 ),
@@ -182,9 +191,9 @@ class _WelcomePageState extends State<WelcomePage>
   }
 }
 
-////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
 /// مرورگر
-////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////
 
 class BrowserPage extends StatefulWidget {
   const BrowserPage({super.key});
@@ -217,12 +226,17 @@ class _BrowserPageState extends State<BrowserPage> {
           !results.contains(ConnectivityResult.none);
 
       if (mounted) {
+
         setState(() {
+
           hasInternet = connected;
+
         });
 
         if (connected) {
+
           controller?.reload();
+
         }
       }
     });
@@ -236,35 +250,90 @@ class _BrowserPageState extends State<BrowserPage> {
     if (!mounted) return;
 
     setState(() {
+
       hasInternet =
           !result.contains(ConnectivityResult.none);
-    });
-  }
 
-  @override
+    });
+
+  }
+    @override
   void dispose() {
     connectivitySubscription.cancel();
     super.dispose();
   }
 
+  Future<bool> _onWillPop() async {
+
+    if (controller != null) {
+
+      final canGoBack = await controller!.canGoBack();
+
+      if (canGoBack) {
+
+        await controller!.goBack();
+
+        return false;
+
+      }
+
+    }
+
+    final exit = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) {
+
+            return AlertDialog(
+
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+
+              title: const Text(
+                "خروج از برنامه",
+                textAlign: TextAlign.center,
+              ),
+
+              content: const Text(
+                "آیا مایل به خروج از برنامه هستید؟",
+                textAlign: TextAlign.center,
+              ),
+
+              actionsAlignment: MainAxisAlignment.spaceEvenly,
+
+              actions: [
+
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context, false);
+                  },
+                  child: const Text("خیر"),
+                ),
+
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text("بله"),
+                ),
+
+              ],
+            );
+
+          },
+        ) ??
+        false;
+
+    return exit;
+  }
+
   @override
   Widget build(BuildContext context) {
 
-    return PopScope(
-      canPop: false,
-            onPopInvokedWithResult: (didPop, result) async {
+    return WillPopScope(
 
-        if (controller != null &&
-            await controller!.canGoBack()) {
-
-          controller!.goBack();
-
-        } else {
-
-          SystemNavigator.pop();
-
-        }
-      },
+      onWillPop: _onWillPop,
 
       child: Scaffold(
 
@@ -293,94 +362,116 @@ class _BrowserPageState extends State<BrowserPage> {
                     ),
 
                   ),
-
-                  initialSettings: InAppWebViewSettings(
-
+                                    initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
-
                     domStorageEnabled: true,
-
                     databaseEnabled: true,
-
                     cacheEnabled: true,
-
                     supportZoom: false,
-
                     allowsInlineMediaPlayback: true,
-
                     mediaPlaybackRequiresUserGesture: false,
-
                     thirdPartyCookiesEnabled: true,
-
                     useShouldOverrideUrlLoading: true,
-
                     useHybridComposition: true,
-
                     transparentBackground: true,
-
                     disableContextMenu: true,
-
                     userAgent:
                         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36",
-
                   ),
 
                   onWebViewCreated: (c) {
-
                     controller = c;
-
-                  },
-
-                  onProgressChanged: (controller, value) {
-
-                    if (!mounted) return;
-
-                    setState(() {
-
-                      progress = value / 100;
-
-                    });
-
                   },
 
                   onLoadStart: (controller, url) {
-
                     if (!mounted) return;
 
                     setState(() {
-
                       progress = 0;
-
                     });
+                  },
 
+                  onProgressChanged: (controller, value) {
+                    if (!mounted) return;
+
+                    setState(() {
+                      progress = value / 100;
+                    });
                   },
 
                   onLoadStop: (controller, url) async {
+                    if (!mounted) return;
+
+                    setState(() {
+                      progress = 1;
+                    });
+                  },
+
+                  // این قسمت باعث می‌شود تاریخچه WebView
+                  // همیشه به‌روز باشد و Back درست کار کند.
+                  onUpdateVisitedHistory:
+                      (controller, url, isReload) async {},
+
+                  shouldOverrideUrlLoading:
+                      (controller, navigationAction) async {
+                    return NavigationActionPolicy.ALLOW;
+                  },
+                ),
+                                shouldOverrideUrlLoading:
+                      (controller, navigationAction) async {
+
+                    final uri = navigationAction.request.url;
+
+                    if (uri == null) {
+                      return NavigationActionPolicy.ALLOW;
+                    }
+
+                    return NavigationActionPolicy.ALLOW;
+                  },
+
+                  onReceivedError: (controller, request, error) {
 
                     if (!mounted) return;
 
                     setState(() {
-
                       progress = 1;
-
                     });
 
                   },
 
-                  shouldOverrideUrlLoading:
-                      (controller, navigationAction) async {
+                  onReceivedHttpError:
+                      (controller, request, response) {
 
-                    return NavigationActionPolicy.ALLOW;
+                    if (!mounted) return;
+
+                    setState(() {
+                      progress = 1;
+                    });
 
                   },
 
+                  onConsoleMessage: (controller, message) {
+                    debugPrint(message.message);
+                  },
+
                 ),
-                            if (!hasInternet)
+
+              ////////////////////////////////////////////////////
+              /// نمایش خطای اینترنت
+              ////////////////////////////////////////////////////
+
+              if (!hasInternet)
+
                 Center(
+
                   child: Padding(
+
                     padding: const EdgeInsets.symmetric(horizontal: 25),
+
                     child: Column(
+
                       mainAxisAlignment: MainAxisAlignment.center,
+
                       children: [
 
                         const Icon(
@@ -396,7 +487,6 @@ class _BrowserPageState extends State<BrowserPage> {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 28,
-                            fontWeight: FontWeight.normal,
                           ),
                         ),
 
@@ -413,6 +503,7 @@ class _BrowserPageState extends State<BrowserPage> {
                         const SizedBox(height: 35),
 
                         ElevatedButton.icon(
+
                           onPressed: () async {
 
                             await _checkConnection();
@@ -422,18 +513,22 @@ class _BrowserPageState extends State<BrowserPage> {
                             }
 
                           },
+
                           icon: const Icon(Icons.refresh),
+
                           label: const Text(
                             "تلاش مجدد",
-                            style: TextStyle(
-                              fontSize: 18,
-                            ),
                           ),
+
                         ),
+
                       ],
                     ),
                   ),
                 ),
+                            ////////////////////////////////////////////////////
+              /// نوار پیشرفت
+              ////////////////////////////////////////////////////
 
               if (progress < 1 && hasInternet)
                 LinearProgressIndicator(
