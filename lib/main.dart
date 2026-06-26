@@ -144,7 +144,7 @@ class _WelcomePageState extends State<WelcomePage>
               const SizedBox(height: 25),
 
               SizedBox(
-                width: MediaQuery.of(context).size.width * .85,
+                width: 220,
                 height: 58,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
