@@ -25,6 +25,6 @@ flutter:
     - assets/images/sina.png
 
   fonts:
-    - family: B-NAZANIN
+    - family: Far_Homa
       fonts:
         - asset: assets/fonts/Far_Homa.ttf
