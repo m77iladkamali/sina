@@ -1,10 +1,15 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.edgeToEdge,
+  );
 
   runApp(const MyApp());
 }
@@ -33,127 +38,99 @@ class WelcomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xff1565C0),
-              Color(0xff0D47A1),
-            ],
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const BrowserPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xff1565C0),
+                Color(0xff0D47A1),
+              ],
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 35),
+          child: SafeArea(
+            child: Column(
+              children: [
 
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 34,
-                    height: 1.4,
-                    color: Color(0xff42E676),
-                    fontWeight: FontWeight.bold,
-                    shadows: [
-                      Shadow(
-                        blurRadius: 10,
-                        color: Colors.black38,
-                        offset: Offset(2, 2),
-                      ),
+                const SizedBox(height: 35),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 34,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      height: 1.4,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 10,
+                          color: Colors.black38,
+                          offset: Offset(2, 2),
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 30),
+
+                Container(
+                  width: 300,
+                  height: 300,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: const [
+                      BoxShadow(
+                        blurRadius: 20,
+                        spreadRadius: 2,
+                        color: Colors.black26,
+                      )
                     ],
                   ),
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              Container(
-                width: 260,
-                height: 260,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: const [
-                    BoxShadow(
-                      blurRadius: 20,
-                      spreadRadius: 2,
-                      color: Colors.black26,
-                    ),
-                  ],
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(25),
-                  child: Image.asset(
-                    "assets/images/sina.png",
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-
-              const Spacer(),
-
-              SizedBox(
-                width: MediaQuery.of(context).size.width * .85,
-                height: 60,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff23C66F),
-                    foregroundColor: Colors.white,
-                    elevation: 10,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(25),
+                  child: Padding(
+                    padding: const EdgeInsets.all(25),
+                    child: Image.asset(
+                      "assets/images/sina.png",
+                      fit: BoxFit.contain,
                     ),
                   ),
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const BrowserPage(),
-                      ),
-                    );
-                  },
-                  child: const Text(
-                    "ورود",
+                ),
+
+                const Spacer(),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    "اینجا محیطی امن و راحت\nبرای یاری شماست",
+                    textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 28,
+                      fontSize: 25,
                       fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      height: 1.6,
                     ),
                   ),
                 ),
-              ),
 
-              const Spacer(),
-
-              const Icon(
-                Icons.verified_user_outlined,
-                color: Colors.white,
-                size: 50,
-              ),
-
-              const SizedBox(height: 12),
-
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "اینجا محیطی امن و راحت برای یاری شماست",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 24,
-                    color: Colors.white,
-                    height: 1.5,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 35),
-            ],
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),
@@ -173,6 +150,8 @@ class BrowserPage extends StatefulWidget {
 class _BrowserPageState extends State<BrowserPage> {
   InAppWebViewController? controller;
 
+  double progress = 0;
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -187,40 +166,79 @@ class _BrowserPageState extends State<BrowserPage> {
       child: Scaffold(
         backgroundColor: const Color(0xFF00897B),
         body: SafeArea(
-          child: Container(
-            margin: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: const Color(0xFF00897B),
-                width: 2,
-              ),
-            ),
-            child: InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri(
-                  "https://www.sinapsycho.com/consultAndroid/index",
+          child: Stack(
+            children: [
+              InAppWebView(
+                gestureRecognizers: {
+                  Factory<OneSequenceGestureRecognizer>(
+                    () => EagerGestureRecognizer(),
+                  ),
+                },
+
+                initialUrlRequest: URLRequest(
+                  url: WebUri(
+                    "https://www.sinapsycho.com/consultAndroid/index",
+                  ),
                 ),
+
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  javaScriptCanOpenWindowsAutomatically: true,
+                  domStorageEnabled: true,
+                  databaseEnabled: true,
+                  cacheEnabled: true,
+                  supportZoom: false,
+                  allowsInlineMediaPlayback: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  thirdPartyCookiesEnabled: true,
+                  useShouldOverrideUrlLoading: true,
+                  transparentBackground: true,
+                  useHybridComposition: true,
+                  disableContextMenu: false,
+                  allowFileAccessFromFileURLs: true,
+                  allowUniversalAccessFromFileURLs: true,
+                  verticalScrollBarEnabled: false,
+                  horizontalScrollBarEnabled: false,
+                  userAgent:
+                      "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+                ),
+
+                onWebViewCreated: (c) {
+                  controller = c;
+                },
+
+                onProgressChanged: (controller, p) {
+                  setState(() {
+                    progress = p / 100;
+                  });
+                },
+
+                onLoadStop: (controller, url) async {
+                  setState(() {
+                    progress = 1;
+                  });
+                },
+
+                onReceivedError: (controller, request, error) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(error.description),
+                    ),
+                  );
+                },
+
+                shouldOverrideUrlLoading:
+                    (controller, navigationAction) async {
+                  return NavigationActionPolicy.ALLOW;
+                },
               ),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                cacheEnabled: true,
-                supportZoom: false,
-                allowsInlineMediaPlayback: true,
-                thirdPartyCookiesEnabled: true,
-                useShouldOverrideUrlLoading: true,
-                mediaPlaybackRequiresUserGesture: false,
-                userAgent:
-                    "Mozilla/5.0 (Linux; Android 14; SM-A256E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-              ),
-              onWebViewCreated: (c) {
-                controller = c;
-              },
-              onLoadStart: (controller, url) {},
-              onLoadStop: (controller, url) async {},
-              onReceivedError: (controller, request, error) {},
-            ),
+
+              if (progress < 1)
+                LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                ),
+            ],
           ),
         ),
       ),
