@@ -16,7 +16,9 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(fontFamily: "BNazanin"),
+      theme: ThemeData(
+        fontFamily: "BNazanin",
+      ),
       home: const WelcomePage(),
     );
   }
@@ -45,49 +47,52 @@ class WelcomePage extends StatelessWidget {
         ),
         child: SafeArea(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-
               const SizedBox(height: 35),
 
-              const Text(
-                "به بخش مشاوره غیرحضوری سینا",
-                style: TextStyle(
-                  fontSize: 34,
-                  color: Color(0xff42E676),
-                  fontWeight: FontWeight.bold,
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 34,
+                    height: 1.4,
+                    color: Color(0xff42E676),
+                    fontWeight: FontWeight.bold,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 10,
+                        color: Colors.black38,
+                        offset: Offset(2, 2),
+                      ),
+                    ],
+                  ),
                 ),
               ),
 
-              const SizedBox(height: 8),
-
-              const Text(
-                "خوش آمدید",
-                style: TextStyle(
-                  fontSize: 40,
-                  color: Color(0xff42E676),
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-              const SizedBox(height: 35),
+              const SizedBox(height: 30),
 
               Container(
-                width: 250,
-                height: 250,
+                width: 260,
+                height: 260,
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
-                  boxShadow: [
+                  boxShadow: const [
                     BoxShadow(
                       blurRadius: 20,
+                      spreadRadius: 2,
                       color: Colors.black26,
-                    )
+                    ),
                   ],
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(25),
                   child: Image.asset(
                     "assets/images/logo.png",
+                    fit: BoxFit.contain,
                   ),
                 ),
               ),
@@ -101,9 +106,9 @@ class WelcomePage extends StatelessWidget {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff23C66F),
                     foregroundColor: Colors.white,
-                    elevation: 8,
+                    elevation: 10,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(25),
                     ),
                   ),
                   onPressed: () {
@@ -117,7 +122,7 @@ class WelcomePage extends StatelessWidget {
                   child: const Text(
                     "ورود",
                     style: TextStyle(
-                      fontSize: 30,
+                      fontSize: 28,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -134,11 +139,16 @@ class WelcomePage extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              const Text(
-                "اینجا محیطی امن و راحت برای یاری شماست",
-                style: TextStyle(
-                  fontSize: 24,
-                  color: Colors.white,
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "اینجا محیطی امن و راحت برای یاری شماست",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 24,
+                    color: Colors.white,
+                    height: 1.5,
+                  ),
                 ),
               ),
 
@@ -150,7 +160,6 @@ class WelcomePage extends StatelessWidget {
     );
   }
 }
-
 ///
 /// مرورگر
 ///
@@ -200,12 +209,17 @@ class _BrowserPageState extends State<BrowserPage> {
                 supportZoom: false,
                 allowsInlineMediaPlayback: true,
                 thirdPartyCookiesEnabled: true,
+                useShouldOverrideUrlLoading: true,
+                mediaPlaybackRequiresUserGesture: false,
                 userAgent:
                     "Mozilla/5.0 (Linux; Android 14; SM-A256E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
               ),
               onWebViewCreated: (c) {
                 controller = c;
               },
+              onLoadStart: (controller, url) {},
+              onLoadStop: (controller, url) async {},
+              onReceivedError: (controller, request, error) {},
             ),
           ),
         ),
