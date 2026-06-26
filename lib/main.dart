@@ -101,7 +101,7 @@ class _WelcomePageState extends State<WelcomePage>
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
+                  "به بخش مشاوره غیرحضوری سینا\n.خوش آمدید",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 30,
@@ -130,7 +130,7 @@ class _WelcomePageState extends State<WelcomePage>
                             const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  "اینجا محیطی امن و راحت\nبرای یاری شماست",
+                  "اینجا محیطی امن و راحت\n.برای یاری شماست",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 24,
