@@ -1,24 +1,14 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
   SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.edgeToEdge,
-  );
-
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
-    ),
   );
 
   runApp(const MyApp());
@@ -32,8 +22,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
         fontFamily: "Far_Homa",
+        useMaterial3: true,
       ),
       home: const WelcomePage(),
     );
@@ -41,7 +31,7 @@ class MyApp extends StatelessWidget {
 }
 
 //////////////////////////////////////////////////////////
-/// صفحه خوش آمدگویی
+/// Welcome Page
 //////////////////////////////////////////////////////////
 
 class WelcomePage extends StatefulWidget {
@@ -55,9 +45,6 @@ class _WelcomePageState extends State<WelcomePage>
     with SingleTickerProviderStateMixin {
 
   late AnimationController _controller;
-
-  late Animation<double> _fade;
-
   late Animation<double> _scale;
 
   @override
@@ -66,16 +53,11 @@ class _WelcomePageState extends State<WelcomePage>
 
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    );
-
-    _fade = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeIn,
+      duration: const Duration(milliseconds: 900),
     );
 
     _scale = Tween<double>(
-      begin: .85,
+      begin: .90,
       end: 1,
     ).animate(
       CurvedAnimation(
@@ -85,30 +67,6 @@ class _WelcomePageState extends State<WelcomePage>
     );
 
     _controller.forward();
-
-    Future.delayed(
-      const Duration(seconds: 3),
-      () {
-        if (!mounted) return;
-
-        Navigator.pushReplacement(
-          context,
-          PageRouteBuilder(
-            transitionDuration:
-                const Duration(milliseconds: 700),
-            pageBuilder: (_, animation, __) =>
-                const BrowserPage(),
-            transitionsBuilder:
-                (_, animation, __, child) {
-              return FadeTransition(
-                opacity: animation,
-                child: child,
-              );
-            },
-          ),
-        );
-      },
-    );
   }
 
   @override
@@ -127,158 +85,108 @@ class _WelcomePageState extends State<WelcomePage>
         width: double.infinity,
 
         decoration: const BoxDecoration(
-
           gradient: LinearGradient(
-
             begin: Alignment.topCenter,
-
             end: Alignment.bottomCenter,
-
             colors: [
-
               Color(0xff1565C0),
-
               Color(0xff0D47A1),
-
             ],
-
           ),
-
         ),
 
         child: SafeArea(
 
-          child: FadeTransition(
+          child: Column(
 
-            opacity: _fade,
+            children: [
 
-            child: ScaleTransition(
+              const SizedBox(height: 35),
 
-              scale: _scale,
-
-              child: Column(
-
-                children: [
-
-                  const SizedBox(height: 35),
-
-                  const Padding(
-
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-
-                    child: Text(
-
-                      "به بخش مشاوره غیرحضوری سینا\n.خوش آمدید",
-
-                      textAlign: TextAlign.center,
-
-                      style: TextStyle(
-
-                        color: Colors.white,
-
-                        fontSize: 30,
-
-                        fontWeight: FontWeight.bold,
-
-                        height: 1.3,
-
-                        shadows: [
-
-                          Shadow(
-
-                            blurRadius: 10,
-
-                            color: Colors.black38,
-
-                            offset: Offset(2,2),
-
-                          ),
-
-                        ],
-
-                      ),
-
-                    ),
-
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "به بخش مشاوره غیرحضوری سینا\nخوش آمدید",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    height: 1.3,
                   ),
-
-                  const SizedBox(height: 20),
-                                    ScaleTransition(
-
-                    scale: _scale,
-child: Container(
-  width: 300,
-  height: 300,
-  decoration: BoxDecoration(
-    color: Colors.white,
-    shape: BoxShape.circle,
-    boxShadow: const [
-      BoxShadow(
-        color: Colors.black26,
-        blurRadius: 20,
-        spreadRadius: 2,
-        offset: Offset(0, 8),
-      ),
-    ],
-  ),
-  child: Padding(
-    padding: const EdgeInsets.all(24),
-    child: Image.asset(
-      "assets/images/sina.png",
-      fit: BoxFit.contain,
-    ),
-  ),
-),
-
-                  ),
-
-                  const Spacer(),
-
-                  const Padding(
-
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-
-                    child: Text(
-
-                      "اینجا محیطی امن و راحت\n.برای یاری شماست",
-
-                      textAlign: TextAlign.center,
-
-                      style: TextStyle(
-
-                        fontSize: 26,
-
-                        fontWeight: FontWeight.bold,
-
-                        color: Colors.white,
-
-                        height: 1.6,
-
-                      ),
-
-                    ),
-
-                  ),
-
-                  const SizedBox(height: 70),
-
-                ],
-
+                ),
               ),
 
-            ),
+              const Spacer(),
 
+              ScaleTransition(
+                scale: _scale,
+                child: SizedBox(
+                  width: 300,
+                  height: 300,
+                  child: Image.asset(
+                    "assets/images/sina.png",
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+
+              const Spacer(),
+                            const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "اینجا محیطی امن و راحت\nبرای یاری شماست",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 25),
+
+              SizedBox(
+                width: MediaQuery.of(context).size.width * .85,
+                height: 58,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xff23C66F),
+                    foregroundColor: Colors.white,
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const BrowserPage(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    "ورود",
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 35),
+            ],
           ),
-
         ),
-
       ),
-
     );
-
   }
-
 }
+
 //////////////////////////////////////////////////////////
 /// Browser Page
 //////////////////////////////////////////////////////////
@@ -322,8 +230,6 @@ class _BrowserPageState extends State<BrowserPage> {
 
       child: Scaffold(
 
-        backgroundColor: const Color(0xff1565C0),
-
         body: SafeArea(
 
           child: Stack(
@@ -343,18 +249,14 @@ class _BrowserPageState extends State<BrowserPage> {
                   },
 
                   initialUrlRequest: URLRequest(
-
                     url: WebUri(
                       "https://www.sinapsycho.com/consultAndroid/index",
                     ),
-
                   ),
 
                   initialSettings: InAppWebViewSettings(
 
                     javaScriptEnabled: true,
-
-                    javaScriptCanOpenWindowsAutomatically: true,
 
                     domStorageEnabled: true,
 
@@ -364,9 +266,9 @@ class _BrowserPageState extends State<BrowserPage> {
 
                     supportZoom: false,
 
-                    allowsInlineMediaPlayback: true,
-
                     mediaPlaybackRequiresUserGesture: false,
+
+                    allowsInlineMediaPlayback: true,
 
                     thirdPartyCookiesEnabled: true,
 
@@ -376,18 +278,8 @@ class _BrowserPageState extends State<BrowserPage> {
 
                     transparentBackground: true,
 
-                    disableContextMenu: false,
-
-                    allowFileAccessFromFileURLs: true,
-
-                    allowUniversalAccessFromFileURLs: true,
-
-                    verticalScrollBarEnabled: false,
-
-                    horizontalScrollBarEnabled: false,
-
                     userAgent:
-                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36",
 
                   ),
 
@@ -396,73 +288,53 @@ class _BrowserPageState extends State<BrowserPage> {
                     controller = c;
 
                   },
-
-                  onProgressChanged:
-                      (controller, value) {
-
+                                    onProgressChanged: (controller, value) {
                     setState(() {
-
                       progress = value / 100;
-
                     });
-
                   },
 
-                  onLoadStart:
-                      (controller, url) {
-
+                  onLoadStart: (controller, url) {
                     setState(() {
-
                       hasError = false;
-
                     });
-
                   },
 
-                  onLoadStop:
-                      (controller, url) async {
-
+                  onLoadStop: (controller, url) async {
                     setState(() {
-
+                      hasError = false;
                       progress = 1;
-
                     });
+                  },
 
+                  onReceivedError: (controller, request, error) {
+                    if (request.isForMainFrame == true) {
+                      setState(() {
+                        hasError = true;
+                      });
+                    }
                   },
 
                   shouldOverrideUrlLoading:
-                      (controller, action) async {
-
+                      (controller, navigationAction) async {
                     return NavigationActionPolicy.ALLOW;
-
-                  },
-
-                  onReceivedError:
-                      (controller, request, error) {
-
-                    setState(() {
-
-                      hasError = true;
-
-                    });
-
                   },
                 ),
-                            if (hasError)
+
+              if (hasError)
                 Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-
                         const Icon(
                           Icons.wifi_off_rounded,
-                          color: Colors.white,
                           size: 90,
+                          color: Colors.red,
                         ),
 
-                        const SizedBox(height: 25),
+                        const SizedBox(height: 20),
 
                         const Text(
                           "اتصال اینترنت برقرار نیست",
@@ -470,35 +342,22 @@ class _BrowserPageState extends State<BrowserPage> {
                           style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
-                            color: Colors.white,
                           ),
                         ),
 
                         const SizedBox(height: 15),
 
                         const Text(
-                          "لطفاً اتصال اینترنت خود را بررسی کنید.",
+                          "لطفاً اینترنت خود را بررسی کنید.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 20,
-                            color: Colors.white70,
                           ),
                         ),
 
-                        const SizedBox(height: 35),
+                        const SizedBox(height: 30),
 
                         ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: const Color(0xff1565C0),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 35,
-                              vertical: 14,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
                           onPressed: () {
                             setState(() {
                               hasError = false;
@@ -507,13 +366,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
                             controller?.reload();
                           },
-                          child: const Text(
-                            "تلاش مجدد",
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          child: const Text("تلاش مجدد"),
                         ),
                       ],
                     ),
@@ -521,11 +374,9 @@ class _BrowserPageState extends State<BrowserPage> {
                 ),
 
               if (progress < 1 && !hasError)
-                const Align(
-                  alignment: Alignment.topCenter,
-                  child: LinearProgressIndicator(
-                    minHeight: 3,
-                  ),
+                LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
                 ),
             ],
           ),
