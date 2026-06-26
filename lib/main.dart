@@ -180,7 +180,7 @@ class _WelcomePageState extends State<WelcomePage>
 
                         fontWeight: FontWeight.bold,
 
-                        height: 1.4,
+                        height: 1.3,
 
                         shadows: [
 
