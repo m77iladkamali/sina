@@ -87,7 +87,7 @@ class _WelcomePageState extends State<WelcomePage>
     _controller.forward();
 
     Future.delayed(
-      const Duration(seconds: 2),
+      const Duration(seconds: 3),
       () {
         if (!mounted) return;
 
