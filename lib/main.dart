@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -22,17 +25,17 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: "Far_Homa",
         useMaterial3: true,
+        fontFamily: "Far_Homa",
       ),
       home: const WelcomePage(),
     );
   }
 }
 
-//////////////////////////////////////////////////////////
-/// Welcome Page
-//////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+/// صفحه خوش آمدگویی
+////////////////////////////////////////////////////////////
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -43,47 +46,43 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage>
     with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
 
-  late AnimationController _controller;
   late Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
 
-    _controller = AnimationController(
+    _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
 
     _scale = Tween<double>(
-      begin: .90,
+      begin: .9,
       end: 1,
     ).animate(
       CurvedAnimation(
-        parent: _controller,
+        parent: _animationController,
         curve: Curves.easeOutBack,
       ),
     );
 
-    _controller.forward();
+    _animationController.forward();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
-
       body: Container(
-
         width: double.infinity,
-
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -94,13 +93,9 @@ class _WelcomePageState extends State<WelcomePage>
             ],
           ),
         ),
-
         child: SafeArea(
-
           child: Column(
-
             children: [
-
               const SizedBox(height: 35),
 
               const Padding(
@@ -178,7 +173,7 @@ class _WelcomePageState extends State<WelcomePage>
                 ),
               ),
 
-              const SizedBox(height: 35),
+              const SizedBox(height: 30),
             ],
           ),
         ),
@@ -187,9 +182,9 @@ class _WelcomePageState extends State<WelcomePage>
   }
 }
 
-//////////////////////////////////////////////////////////
-/// Browser Page
-//////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+/// مرورگر
+////////////////////////////////////////////////////////////
 
 class BrowserPage extends StatefulWidget {
   const BrowserPage({super.key});
@@ -204,16 +199,60 @@ class _BrowserPageState extends State<BrowserPage> {
 
   double progress = 0;
 
-  bool hasError = false;
+  bool hasInternet = true;
+
+  late final StreamSubscription<List<ConnectivityResult>>
+      connectivitySubscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _checkConnection();
+
+    connectivitySubscription =
+        Connectivity().onConnectivityChanged.listen((results) {
+
+      final connected =
+          !results.contains(ConnectivityResult.none);
+
+      if (mounted) {
+        setState(() {
+          hasInternet = connected;
+        });
+
+        if (connected) {
+          controller?.reload();
+        }
+      }
+    });
+  }
+
+  Future<void> _checkConnection() async {
+
+    final result =
+        await Connectivity().checkConnectivity();
+
+    if (!mounted) return;
+
+    setState(() {
+      hasInternet =
+          !result.contains(ConnectivityResult.none);
+    });
+  }
+
+  @override
+  void dispose() {
+    connectivitySubscription.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
 
     return PopScope(
-
       canPop: false,
-
-      onPopInvokedWithResult: (didPop, result) async {
+            onPopInvokedWithResult: (didPop, result) async {
 
         if (controller != null &&
             await controller!.canGoBack()) {
@@ -225,7 +264,6 @@ class _BrowserPageState extends State<BrowserPage> {
           SystemNavigator.pop();
 
         }
-
       },
 
       child: Scaffold(
@@ -236,7 +274,7 @@ class _BrowserPageState extends State<BrowserPage> {
 
             children: [
 
-              if (!hasError)
+              if (hasInternet)
 
                 InAppWebView(
 
@@ -249,9 +287,11 @@ class _BrowserPageState extends State<BrowserPage> {
                   },
 
                   initialUrlRequest: URLRequest(
+
                     url: WebUri(
                       "https://www.sinapsycho.com/consultAndroid/index",
                     ),
+
                   ),
 
                   initialSettings: InAppWebViewSettings(
@@ -266,9 +306,9 @@ class _BrowserPageState extends State<BrowserPage> {
 
                     supportZoom: false,
 
-                    mediaPlaybackRequiresUserGesture: false,
-
                     allowsInlineMediaPlayback: true,
+
+                    mediaPlaybackRequiresUserGesture: false,
 
                     thirdPartyCookiesEnabled: true,
 
@@ -277,6 +317,8 @@ class _BrowserPageState extends State<BrowserPage> {
                     useHybridComposition: true,
 
                     transparentBackground: true,
+
+                    disableContextMenu: true,
 
                     userAgent:
                         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36",
@@ -288,53 +330,66 @@ class _BrowserPageState extends State<BrowserPage> {
                     controller = c;
 
                   },
-                                    onProgressChanged: (controller, value) {
+
+                  onProgressChanged: (controller, value) {
+
+                    if (!mounted) return;
+
                     setState(() {
+
                       progress = value / 100;
+
                     });
+
                   },
 
                   onLoadStart: (controller, url) {
+
+                    if (!mounted) return;
+
                     setState(() {
-                      hasError = false;
+
+                      progress = 0;
+
                     });
+
                   },
 
                   onLoadStop: (controller, url) async {
-                    setState(() {
-                      hasError = false;
-                      progress = 1;
-                    });
-                  },
 
-                  onReceivedError: (controller, request, error) {
-                    if (request.isForMainFrame == true) {
-                      setState(() {
-                        hasError = true;
-                      });
-                    }
+                    if (!mounted) return;
+
+                    setState(() {
+
+                      progress = 1;
+
+                    });
+
                   },
 
                   shouldOverrideUrlLoading:
                       (controller, navigationAction) async {
-                    return NavigationActionPolicy.ALLOW;
-                  },
-                ),
 
-              if (hasError)
+                    return NavigationActionPolicy.ALLOW;
+
+                  },
+
+                ),
+                            if (!hasInternet)
                 Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.symmetric(horizontal: 25),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
+
                         const Icon(
                           Icons.wifi_off_rounded,
                           size: 90,
                           color: Colors.red,
                         ),
 
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 25),
 
                         const Text(
                           "اتصال اینترنت برقرار نیست",
@@ -348,36 +403,44 @@ class _BrowserPageState extends State<BrowserPage> {
                         const SizedBox(height: 15),
 
                         const Text(
-                          "لطفاً اینترنت خود را بررسی کنید.",
+                          "لطفاً اتصال اینترنت خود را بررسی کنید.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 20,
                           ),
                         ),
 
-                        const SizedBox(height: 30),
+                        const SizedBox(height: 35),
 
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              hasError = false;
-                              progress = 0;
-                            });
+                        ElevatedButton.icon(
+                          onPressed: () async {
 
-                            controller?.reload();
+                            await _checkConnection();
+
+                            if (hasInternet) {
+                              controller?.reload();
+                            }
+
                           },
-                          child: const Text("تلاش مجدد"),
+                          icon: const Icon(Icons.refresh),
+                          label: const Text(
+                            "تلاش مجدد",
+                            style: TextStyle(
+                              fontSize: 18,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ),
 
-              if (progress < 1 && !hasError)
+              if (progress < 1 && hasInternet)
                 LinearProgressIndicator(
                   value: progress,
                   minHeight: 3,
                 ),
+
             ],
           ),
         ),
