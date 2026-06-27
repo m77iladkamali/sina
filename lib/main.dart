@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -128,7 +132,7 @@ class _WelcomePageState extends State<WelcomePage>
   }
 }
 
-// ===== مرورگر با webview_flutter =====
+// ===== مرورگر با InAppWebView =====
 class BrowserPage extends StatefulWidget {
   const BrowserPage({super.key});
 
@@ -137,10 +141,14 @@ class BrowserPage extends StatefulWidget {
 }
 
 class _BrowserPageState extends State<BrowserPage> {
-  late final WebViewController controller;
+  InAppWebViewController? controller;
   double progress = 0;
   bool hasInternet = true;
   late final StreamSubscription<List<ConnectivityResult>> connectivitySubscription;
+
+  // لیست تاریخچه برای مدیریت دستی (در صورت نیاز)
+  List<String> historyStack = [];
+  int currentIndex = -1;
 
   @override
   void initState() {
@@ -151,34 +159,9 @@ class _BrowserPageState extends State<BrowserPage> {
       final connected = !results.contains(ConnectivityResult.none);
       if (mounted) {
         setState(() => hasInternet = connected);
-        if (connected) controller.reload();
+        if (connected) controller?.reload();
       }
     });
-
-    // مقداردهی WebViewController
-    controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.transparent)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int value) {
-            if (mounted) setState(() => progress = value / 100);
-          },
-          onPageStarted: (url) {
-            if (mounted) setState(() => progress = 0);
-          },
-          onPageFinished: (url) {
-            if (mounted) setState(() => progress = 1);
-          },
-          onNavigationRequest: (request) {
-            // اجازه بارگذاری همه لینک‌ها
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(
-        Uri.parse("https://www.sinapsycho.com/consultAndroid/index"),
-      );
   }
 
   Future<void> _checkConnection() async {
@@ -195,17 +178,29 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<bool> _onWillPop() async {
-    if (await controller.canGoBack()) {
-      controller.goBack();
+    // ابتدا سعی می‌کنیم از تاریخچه WebView استفاده کنیم
+    if (controller != null) {
+      final canGoBack = await controller!.canGoBack();
+      if (canGoBack) {
+        await controller!.goBack();
+        return false;
+      }
+    }
+
+    // اگر WebView تاریخچه نداشت، از تاریخچه دستی استفاده می‌کنیم
+    if (currentIndex > 0) {
+      final previousUrl = historyStack[currentIndex - 1];
+      currentIndex--;
+      await controller?.loadUrl(urlRequest: URLRequest(url: WebUri(previousUrl)));
       return false;
     }
+
+    // اگر هیچ صفحه‌ای برای بازگشت نبود، دیالوگ خروج نمایش داده می‌شود
     final exit = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
             title: const Text("خروج از برنامه", textAlign: TextAlign.center),
             content: const Text("آیا مایل به خروج از برنامه هستید؟", textAlign: TextAlign.center),
             actionsAlignment: MainAxisAlignment.spaceEvenly,
@@ -228,7 +223,124 @@ class _BrowserPageState extends State<BrowserPage> {
           child: Stack(
             children: [
               if (hasInternet)
-                WebViewWidget(controller: controller),
+                InAppWebView(
+                  // ===== تنظیمات تشخیص حرکات برای لینک‌ها =====
+                  gestureRecognizers: {
+                    Factory<OneSequenceGestureRecognizer>(
+                      () => EagerGestureRecognizer(),
+                    ),
+                    Factory<GestureRecognizer>(
+                      () => TapGestureRecognizer()..onTap = () {},
+                    ),
+                    // تشخیص حرکات کشیدن (برای اسکرول)
+                    Factory<GestureRecognizer>(
+                      () => DragGestureRecognizer()..onStart = (_) {},
+                    ),
+                  },
+                  initialUrlRequest: URLRequest(
+                    url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
+                  ),
+                  initialSettings: InAppWebViewSettings(
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    databaseEnabled: true,
+                    cacheEnabled: true,
+                    supportZoom: false,
+                    allowsInlineMediaPlayback: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    thirdPartyCookiesEnabled: true,
+                    // ===== تنظیمات کلیدی =====
+                    useHybridComposition: false, // برای تاریخچه و لمس
+                    transparentBackground: false,
+                    disableContextMenu: true,
+                    supportMultipleWindows: true,
+                    javaScriptCanOpenWindowsAutomatically: true,
+                    useShouldOverrideUrlLoading: true,
+                    preferredContentMode: PreferredContentMode.RECOMMENDED,
+                  ),
+                  onWebViewCreated: (c) {
+                    controller = c;
+                  },
+                  onLoadStart: (controller, url) {
+                    if (!mounted) return;
+                    setState(() => progress = 0);
+                  },
+                  onProgressChanged: (controller, value) {
+                    if (!mounted) return;
+                    setState(() => progress = value / 100);
+                  },
+                  onLoadStop: (controller, url) async {
+                    if (!mounted) return;
+                    setState(() => progress = 1);
+
+                    // به‌روزرسانی تاریخچه دستی
+                    if (url != null) {
+                      final urlStr = url.toString();
+                      // اگر آخرین URL با این یکی برابر نبود، به لیست اضافه کن
+                      if (historyStack.isEmpty || historyStack.last != urlStr) {
+                        // اگر در حال عقب‌گرد نبودیم (یعنی currentIndex آخرین است)
+                        if (currentIndex == historyStack.length - 1) {
+                          historyStack.add(urlStr);
+                          currentIndex = historyStack.length - 1;
+                        } else {
+                          // اگر در میانه تاریخچه هستیم و به صفحه جدیدی رفتیم، بقیه را حذف می‌کنیم
+                          historyStack = historyStack.sublist(0, currentIndex + 1);
+                          historyStack.add(urlStr);
+                          currentIndex = historyStack.length - 1;
+                        }
+                      }
+                      debugPrint("History stack: $historyStack, index: $currentIndex");
+                    }
+                  },
+                  // ===== ردیابی تغییرات تاریخچه (برای SPA) =====
+                  onUpdateVisitedHistory: (controller, url, isReload) {
+                    debugPrint("Visited history: $url");
+                    // این رویداد برای تغییرات pushState/replaceState فراخوانی می‌شود
+                    // بنابراین می‌توانیم تاریخچه دستی را به‌روز کنیم
+                    if (url != null) {
+                      final urlStr = url.toString();
+                      if (historyStack.isEmpty || historyStack.last != urlStr) {
+                        // اگر isReload نباشد، یک ورودی جدید اضافه می‌کنیم
+                        if (!isReload) {
+                          if (currentIndex == historyStack.length - 1) {
+                            historyStack.add(urlStr);
+                            currentIndex = historyStack.length - 1;
+                          } else {
+                            historyStack = historyStack.sublist(0, currentIndex + 1);
+                            historyStack.add(urlStr);
+                            currentIndex = historyStack.length - 1;
+                          }
+                        } else {
+                          // برای reload، فقط آخرین را به‌روز می‌کنیم (جایگزین)
+                          if (currentIndex >= 0 && currentIndex < historyStack.length) {
+                            historyStack[currentIndex] = urlStr;
+                          }
+                        }
+                        debugPrint("History updated: $historyStack, index: $currentIndex");
+                      }
+                    }
+                  },
+                  // ===== مدیریت لینک‌های جدید (target="_blank") =====
+                  shouldOverrideUrlLoading: (controller, navigationAction) async {
+                    final url = navigationAction.request.url;
+                    if (url == null) return NavigationActionPolicy.ALLOW;
+
+                    // اگر پنجره جدید است، در همین WebView بارگذاری کن
+                    if (!navigationAction.isForMainFrame) {
+                      await controller.loadUrl(urlRequest: URLRequest(url: url));
+                      return NavigationActionPolicy.CANCEL;
+                    }
+
+                    // اجازه بارگذاری عادی
+                    return NavigationActionPolicy.ALLOW;
+                  },
+                  // ===== دریافت خطاهای جاوااسکریپت (برای دیباگ) =====
+                  onConsoleMessage: (controller, consoleMessage) {
+                    if (kDebugMode) {
+                      debugPrint("JS Console: ${consoleMessage.message}");
+                    }
+                  },
+                ),
               if (!hasInternet)
                 Center(
                   child: Padding(
@@ -245,7 +357,7 @@ class _BrowserPageState extends State<BrowserPage> {
                         ElevatedButton.icon(
                           onPressed: () async {
                             await _checkConnection();
-                            if (hasInternet) controller.reload();
+                            if (hasInternet) controller?.reload();
                           },
                           icon: const Icon(Icons.refresh),
                           label: const Text("تلاش مجدد"),
