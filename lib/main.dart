@@ -131,7 +131,7 @@ class _WelcomePageState extends State<WelcomePage>
   }
 }
 
-// ===== مرورگر با InAppWebView =====
+// ===== مرورگر با InAppWebView (بدون تاریخچه دستی) =====
 class BrowserPage extends StatefulWidget {
   const BrowserPage({super.key});
 
@@ -144,10 +144,6 @@ class _BrowserPageState extends State<BrowserPage> {
   double progress = 0;
   bool hasInternet = true;
   late final StreamSubscription<List<ConnectivityResult>> connectivitySubscription;
-
-  // لیست تاریخچه دستی برای مدیریت SPA
-  List<String> historyStack = [];
-  int currentIndex = -1;
 
   @override
   void initState() {
@@ -177,7 +173,6 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<bool> _onWillPop() async {
-    // ۱. سعی می‌کنیم از تاریخچه خود WebView استفاده کنیم
     if (controller != null) {
       final canGoBack = await controller!.canGoBack();
       if (canGoBack) {
@@ -186,15 +181,7 @@ class _BrowserPageState extends State<BrowserPage> {
       }
     }
 
-    // ۲. اگر WebView تاریخچه نداشت (یا به‌روز نبود)، از تاریخچه دستی استفاده می‌کنیم
-    if (currentIndex > 0) {
-      final previousUrl = historyStack[currentIndex - 1];
-      currentIndex--;
-      await controller?.loadUrl(urlRequest: URLRequest(url: WebUri(previousUrl)));
-      return false;
-    }
-
-    // ۳. در غیر این صورت دیالوگ خروج
+    // اگر به صفحه اول رسیدیم، دیالوگ خروج
     final exit = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -223,7 +210,7 @@ class _BrowserPageState extends State<BrowserPage> {
             children: [
               if (hasInternet)
                 InAppWebView(
-                  // ===== تنظیمات تشخیص حرکات برای لینک‌ها =====
+                  // ===== تشخیص حرکات برای لینک‌ها و دکمه‌ها =====
                   gestureRecognizers: {
                     Factory<OneSequenceGestureRecognizer>(
                       () => EagerGestureRecognizer(),
@@ -244,16 +231,13 @@ class _BrowserPageState extends State<BrowserPage> {
                     allowsInlineMediaPlayback: true,
                     mediaPlaybackRequiresUserGesture: false,
                     thirdPartyCookiesEnabled: true,
-                    // ===== کلید حل مشکل =====
-                    useHybridComposition: false, // ثبت درست تاریخچه و رویدادهای لمسی
+                    // ===== تنظیمات کلیدی =====
+                    useHybridComposition: false, // ثبت درست تاریخچه
                     transparentBackground: false,
                     disableContextMenu: true,
                     supportMultipleWindows: true,
                     javaScriptCanOpenWindowsAutomatically: true,
                     useShouldOverrideUrlLoading: true,
-                    // ===== تنظیمات اضافی برای اطمینان =====
-                    verticalScrollBarEnabled: true,
-                    horizontalScrollBarEnabled: true,
                   ),
                   onWebViewCreated: (c) {
                     controller = c;
@@ -269,54 +253,8 @@ class _BrowserPageState extends State<BrowserPage> {
                   onLoadStop: (controller, url) async {
                     if (!mounted) return;
                     setState(() => progress = 1);
-
-                    // به‌روزرسانی تاریخچه دستی
-                    if (url != null) {
-                      final urlStr = url.toString();
-                      if (historyStack.isEmpty || historyStack.last != urlStr) {
-                        if (currentIndex == historyStack.length - 1) {
-                          historyStack.add(urlStr);
-                          currentIndex = historyStack.length - 1;
-                        } else {
-                          historyStack = historyStack.sublist(0, currentIndex + 1);
-                          historyStack.add(urlStr);
-                          currentIndex = historyStack.length - 1;
-                        }
-                      }
-                      if (kDebugMode) {
-                        debugPrint("History stack: $historyStack, index: $currentIndex");
-                      }
-                    }
                   },
-                  // ===== ردیابی تغییرات تاریخچه (برای SPA) =====
-                  onUpdateVisitedHistory: (controller, url, isReload) {
-                    if (kDebugMode) {
-                      debugPrint("Visited history: $url, isReload: $isReload");
-                    }
-                    if (url != null) {
-                      final urlStr = url.toString();
-                      if (historyStack.isEmpty || historyStack.last != urlStr) {
-                        if (isReload == false) {
-                          if (currentIndex == historyStack.length - 1) {
-                            historyStack.add(urlStr);
-                            currentIndex = historyStack.length - 1;
-                          } else {
-                            historyStack = historyStack.sublist(0, currentIndex + 1);
-                            historyStack.add(urlStr);
-                            currentIndex = historyStack.length - 1;
-                          }
-                        } else {
-                          if (currentIndex >= 0 && currentIndex < historyStack.length) {
-                            historyStack[currentIndex] = urlStr;
-                          }
-                        }
-                        if (kDebugMode) {
-                          debugPrint("History updated: $historyStack, index: $currentIndex");
-                        }
-                      }
-                    }
-                  },
-                  // ===== مدیریت لینک‌های جدید (target="_blank") =====
+                  // ===== مدیریت لینک‌های جدید =====
                   shouldOverrideUrlLoading: (controller, navigationAction) async {
                     final url = navigationAction.request.url;
                     if (url == null) return NavigationActionPolicy.ALLOW;
@@ -326,10 +264,9 @@ class _BrowserPageState extends State<BrowserPage> {
                       await controller.loadUrl(urlRequest: URLRequest(url: url));
                       return NavigationActionPolicy.CANCEL;
                     }
-
                     return NavigationActionPolicy.ALLOW;
                   },
-                  // ===== دریافت خطاهای جاوااسکریپت (برای دیباگ) =====
+                  // ===== خطاهای JS (فقط در حالت debug) =====
                   onConsoleMessage: (controller, consoleMessage) {
                     if (kDebugMode) {
                       debugPrint("JS Console: ${consoleMessage.message}");
