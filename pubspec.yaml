@@ -12,7 +12,6 @@ dependencies:
   connectivity_plus: ^6.1.5
   cupertino_icons: ^1.0.8
   webview_flutter: ^4.13.1
-  flutter_inappwebview: ^6.1.5
   flutter_custom_tabs: ^2.1.0
 
 dev_dependencies:
