@@ -305,13 +305,14 @@ class _BrowserPageState extends State<BrowserPage> {
                     allowsInlineMediaPlayback: true,
                     mediaPlaybackRequiresUserGesture: false,
                     thirdPartyCookiesEnabled: true,
-                    // اصلاحات اصلی برای رفع مشکل Back و تعاملات لمسی
-                    useHybridComposition: false, // بسیار مهم
-                    transparentBackground: false, // بسیار مهم
+                    // تنظیمات کلیدی برای رفع مشکل Back و تعاملات لمسی
+                    useHybridComposition: false,
+                    transparentBackground: false,
                     disableContextMenu: true,
-                    supportMultipleWindows: true, // برای لینک‌های جدید
-                    javaScriptCanOpenWindowsAutomatically: true, // برای پنجره‌های جدید
-                    // userAgent: "Mozilla/5.0 ..." // می‌توانید نگه دارید یا حذف کنید
+                    supportMultipleWindows: true,
+                    javaScriptCanOpenWindowsAutomatically: true,
+                    useShouldOverrideUrlLoading: true, // برای اطمینان از عملکرد صحیح
+                    // userAgent: "Mozilla/5.0 ..." // در صورت نیاز
                   ),
                   onWebViewCreated: (c) {
                     controller = c;
@@ -333,11 +334,19 @@ class _BrowserPageState extends State<BrowserPage> {
                     setState(() {
                       progress = 1;
                     });
+                    // برای دیباگ می‌توانید وضعیت history را چاپ کنید
+                    // bool canGoBack = await controller.canGoBack();
+                    // debugPrint("canGoBack after load: $canGoBack");
                   },
-                  // مدیریت لینک‌هایی که در پنجره جدید باز می‌شوند
+                  // پیگیری تغییرات تاریخچه (مخصوص SPA ها)
+                  onUpdateVisitedHistory: (controller, url, isReload) {
+                    debugPrint("History updated: $url");
+                    // این رویداد به ما کمک می‌کند تا تاریخچه را به‌روز نگه داریم
+                  },
+                  // مدیریت لینک‌های جدید و جلوگیری از باز شدن در مرورگر خارجی
                   shouldOverrideUrlLoading:
                       (controller, navigationAction) async {
-                    // اگر درخواست مربوط به فریم اصلی نباشد (مثلاً target="_blank")
+                    // اگر درخواست از فریم اصلی نباشد (مثلاً target="_blank")
                     if (navigationAction.isForMainFrame == false) {
                       await controller.loadUrl(
                         urlRequest:
