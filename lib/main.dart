@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -146,7 +145,7 @@ class _BrowserPageState extends State<BrowserPage> {
   bool hasInternet = true;
   late final StreamSubscription<List<ConnectivityResult>> connectivitySubscription;
 
-  // لیست تاریخچه برای مدیریت دستی (در صورت نیاز)
+  // لیست تاریخچه دستی برای مدیریت بهتر (مخصوص SPA)
   List<String> historyStack = [];
   int currentIndex = -1;
 
@@ -178,7 +177,7 @@ class _BrowserPageState extends State<BrowserPage> {
   }
 
   Future<bool> _onWillPop() async {
-    // ابتدا سعی می‌کنیم از تاریخچه WebView استفاده کنیم
+    // اول سعی می‌کنیم از تاریخچه خود WebView استفاده کنیم
     if (controller != null) {
       final canGoBack = await controller!.canGoBack();
       if (canGoBack) {
@@ -195,7 +194,7 @@ class _BrowserPageState extends State<BrowserPage> {
       return false;
     }
 
-    // اگر هیچ صفحه‌ای برای بازگشت نبود، دیالوگ خروج نمایش داده می‌شود
+    // در غیر این صورت دیالوگ خروج
     final exit = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -229,13 +228,10 @@ class _BrowserPageState extends State<BrowserPage> {
                     Factory<OneSequenceGestureRecognizer>(
                       () => EagerGestureRecognizer(),
                     ),
-                    Factory<GestureRecognizer>(
+                    Factory<OneSequenceGestureRecognizer>(
                       () => TapGestureRecognizer()..onTap = () {},
                     ),
-                    // تشخیص حرکات کشیدن (برای اسکرول)
-                    Factory<GestureRecognizer>(
-                      () => DragGestureRecognizer()..onStart = (_) {},
-                    ),
+                    // DragGestureRecognizer حذف شد (چون انتزاعی است)
                   },
                   initialUrlRequest: URLRequest(
                     url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
@@ -256,7 +252,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     supportMultipleWindows: true,
                     javaScriptCanOpenWindowsAutomatically: true,
                     useShouldOverrideUrlLoading: true,
-                    preferredContentMode: PreferredContentMode.RECOMMENDED,
+                    // preferredContentMode حذف شد (در این نسخه موجود نیست)
                   ),
                   onWebViewCreated: (c) {
                     controller = c;
@@ -276,14 +272,13 @@ class _BrowserPageState extends State<BrowserPage> {
                     // به‌روزرسانی تاریخچه دستی
                     if (url != null) {
                       final urlStr = url.toString();
-                      // اگر آخرین URL با این یکی برابر نبود، به لیست اضافه کن
                       if (historyStack.isEmpty || historyStack.last != urlStr) {
-                        // اگر در حال عقب‌گرد نبودیم (یعنی currentIndex آخرین است)
+                        // اگر در انتهای تاریخچه هستیم (جریان عادی)
                         if (currentIndex == historyStack.length - 1) {
                           historyStack.add(urlStr);
                           currentIndex = historyStack.length - 1;
                         } else {
-                          // اگر در میانه تاریخچه هستیم و به صفحه جدیدی رفتیم، بقیه را حذف می‌کنیم
+                          // اگر در میانه تاریخچه هستیم، بقیه را حذف می‌کنیم
                           historyStack = historyStack.sublist(0, currentIndex + 1);
                           historyStack.add(urlStr);
                           currentIndex = historyStack.length - 1;
@@ -294,14 +289,12 @@ class _BrowserPageState extends State<BrowserPage> {
                   },
                   // ===== ردیابی تغییرات تاریخچه (برای SPA) =====
                   onUpdateVisitedHistory: (controller, url, isReload) {
-                    debugPrint("Visited history: $url");
-                    // این رویداد برای تغییرات pushState/replaceState فراخوانی می‌شود
-                    // بنابراین می‌توانیم تاریخچه دستی را به‌روز کنیم
+                    debugPrint("Visited history: $url, isReload: $isReload");
                     if (url != null) {
                       final urlStr = url.toString();
                       if (historyStack.isEmpty || historyStack.last != urlStr) {
-                        // اگر isReload نباشد، یک ورودی جدید اضافه می‌کنیم
-                        if (!isReload) {
+                        // اگر reload نیست، یک ورودی جدید اضافه می‌کنیم
+                        if (isReload == false) {
                           if (currentIndex == historyStack.length - 1) {
                             historyStack.add(urlStr);
                             currentIndex = historyStack.length - 1;
@@ -311,7 +304,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             currentIndex = historyStack.length - 1;
                           }
                         } else {
-                          // برای reload، فقط آخرین را به‌روز می‌کنیم (جایگزین)
+                          // برای reload، آخرین ورودی را جایگزین می‌کنیم
                           if (currentIndex >= 0 && currentIndex < historyStack.length) {
                             historyStack[currentIndex] = urlStr;
                           }
@@ -331,7 +324,6 @@ class _BrowserPageState extends State<BrowserPage> {
                       return NavigationActionPolicy.CANCEL;
                     }
 
-                    // اجازه بارگذاری عادی
                     return NavigationActionPolicy.ALLOW;
                   },
                   // ===== دریافت خطاهای جاوااسکریپت (برای دیباگ) =====
