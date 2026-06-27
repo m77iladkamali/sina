@@ -46,9 +46,7 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage>
     with SingleTickerProviderStateMixin {
-
   late AnimationController _animationController;
-
   late Animation<double> _scale;
 
   @override
@@ -81,13 +79,9 @@ class _WelcomePageState extends State<WelcomePage>
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
-
       body: Container(
-
         width: double.infinity,
-
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -98,15 +92,10 @@ class _WelcomePageState extends State<WelcomePage>
             ],
           ),
         ),
-
         child: SafeArea(
-
           child: Column(
-
             children: [
-
               const SizedBox(height: 55),
-
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
@@ -120,9 +109,7 @@ class _WelcomePageState extends State<WelcomePage>
                   ),
                 ),
               ),
-
               const Spacer(),
-
               ScaleTransition(
                 scale: _scale,
                 child: SizedBox(
@@ -134,9 +121,8 @@ class _WelcomePageState extends State<WelcomePage>
                   ),
                 ),
               ),
-
               const SizedBox(height: 25),
-                            const Padding(
+              const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
                   "اینجا محیطی امن و راحت\n.برای یاری شماست",
@@ -149,9 +135,7 @@ class _WelcomePageState extends State<WelcomePage>
                   ),
                 ),
               ),
-
               const SizedBox(height: 25),
-
               SizedBox(
                 width: 180,
                 height: 56,
@@ -181,7 +165,6 @@ class _WelcomePageState extends State<WelcomePage>
                   ),
                 ),
               ),
-
               const SizedBox(height: 30),
             ],
           ),
@@ -203,11 +186,8 @@ class BrowserPage extends StatefulWidget {
 }
 
 class _BrowserPageState extends State<BrowserPage> {
-
   InAppWebViewController? controller;
-
   double progress = 0;
-
   bool hasInternet = true;
 
   late final StreamSubscription<List<ConnectivityResult>>
@@ -221,106 +201,78 @@ class _BrowserPageState extends State<BrowserPage> {
 
     connectivitySubscription =
         Connectivity().onConnectivityChanged.listen((results) {
-
-      final connected =
-          !results.contains(ConnectivityResult.none);
+      final connected = !results.contains(ConnectivityResult.none);
 
       if (mounted) {
-
         setState(() {
-
           hasInternet = connected;
-
         });
 
         if (connected) {
-
           controller?.reload();
-
         }
       }
     });
   }
 
   Future<void> _checkConnection() async {
-
-    final result =
-        await Connectivity().checkConnectivity();
+    final result = await Connectivity().checkConnectivity();
 
     if (!mounted) return;
 
     setState(() {
-
-      hasInternet =
-          !result.contains(ConnectivityResult.none);
-
+      hasInternet = !result.contains(ConnectivityResult.none);
     });
-
   }
-    @override
+
+  @override
   void dispose() {
     connectivitySubscription.cancel();
     super.dispose();
   }
 
   Future<bool> _onWillPop() async {
-
     if (controller != null) {
-
       final canGoBack = await controller!.canGoBack();
 
       if (canGoBack) {
-
         await controller!.goBack();
-
         return false;
-
       }
-
     }
 
     final exit = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (context) {
-
             return AlertDialog(
-
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
-
               title: const Text(
                 "خروج از برنامه",
                 textAlign: TextAlign.center,
               ),
-
               content: const Text(
                 "آیا مایل به خروج از برنامه هستید؟",
                 textAlign: TextAlign.center,
               ),
-
               actionsAlignment: MainAxisAlignment.spaceEvenly,
-
               actions: [
-
                 TextButton(
                   onPressed: () {
                     Navigator.pop(context, false);
                   },
                   child: const Text("خیر"),
                 ),
-
                 ElevatedButton(
                   onPressed: () {
                     Navigator.pop(context, true);
                   },
                   child: const Text("بله"),
                 ),
-
               ],
             );
-
           },
         ) ??
         false;
@@ -330,39 +282,21 @@ class _BrowserPageState extends State<BrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-
     return WillPopScope(
-
       onWillPop: _onWillPop,
-
       child: Scaffold(
-
         body: SafeArea(
-
           child: Stack(
-
             children: [
-
               if (hasInternet)
-
                 InAppWebView(
-
-                  gestureRecognizers: {
-
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => EagerGestureRecognizer(),
-                    ),
-
-                  },
-
+                  // حذف gestureRecognizers برای جلوگیری از تداخل
                   initialUrlRequest: URLRequest(
-
                     url: WebUri(
                       "https://www.sinapsycho.com/consultAndroid/index",
                     ),
-
                   ),
-                                    initialSettings: InAppWebViewSettings(
+                  initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
                     domStorageEnabled: true,
                     databaseEnabled: true,
@@ -371,80 +305,67 @@ class _BrowserPageState extends State<BrowserPage> {
                     allowsInlineMediaPlayback: true,
                     mediaPlaybackRequiresUserGesture: false,
                     thirdPartyCookiesEnabled: true,
-                    useShouldOverrideUrlLoading: true,
-                    useHybridComposition: true,
-                    transparentBackground: true,
+                    // اصلاحات اصلی برای رفع مشکل Back و تعاملات لمسی
+                    useHybridComposition: false, // بسیار مهم
+                    transparentBackground: false, // بسیار مهم
                     disableContextMenu: true,
-                    userAgent:
-                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0 Mobile Safari/537.36",
+                    supportMultipleWindows: true, // برای لینک‌های جدید
+                    javaScriptCanOpenWindowsAutomatically: true, // برای پنجره‌های جدید
+                    // userAgent: "Mozilla/5.0 ..." // می‌توانید نگه دارید یا حذف کنید
                   ),
-
                   onWebViewCreated: (c) {
                     controller = c;
                   },
-
                   onLoadStart: (controller, url) {
                     if (!mounted) return;
-
                     setState(() {
                       progress = 0;
                     });
                   },
-
                   onProgressChanged: (controller, value) {
                     if (!mounted) return;
-
                     setState(() {
                       progress = value / 100;
                     });
                   },
-
                   onLoadStop: (controller, url) async {
                     if (!mounted) return;
-
                     setState(() {
                       progress = 1;
                     });
                   },
-
-                  // این قسمت باعث می‌شود تاریخچه WebView
-                  // همیشه به‌روز باشد و Back درست کار کند.
-                  onUpdateVisitedHistory:
-                      (controller, url, isReload) async {},
-
+                  // مدیریت لینک‌هایی که در پنجره جدید باز می‌شوند
                   shouldOverrideUrlLoading:
                       (controller, navigationAction) async {
+                    // اگر درخواست مربوط به فریم اصلی نباشد (مثلاً target="_blank")
+                    if (navigationAction.isForMainFrame == false) {
+                      await controller.loadUrl(
+                        urlRequest:
+                            URLRequest(url: navigationAction.request.url!),
+                      );
+                      return NavigationActionPolicy.CANCEL;
+                    }
                     return NavigationActionPolicy.ALLOW;
                   },
                 ),
-              
 
               ////////////////////////////////////////////////////
               /// نمایش خطای اینترنت
               ////////////////////////////////////////////////////
 
               if (!hasInternet)
-
                 Center(
-
                   child: Padding(
-
                     padding: const EdgeInsets.symmetric(horizontal: 25),
-
                     child: Column(
-
                       mainAxisAlignment: MainAxisAlignment.center,
-
                       children: [
-
                         const Icon(
                           Icons.wifi_off_rounded,
                           size: 90,
                           color: Colors.red,
                         ),
-
                         const SizedBox(height: 25),
-
                         const Text(
                           "اتصال اینترنت برقرار نیست",
                           textAlign: TextAlign.center,
@@ -452,9 +373,7 @@ class _BrowserPageState extends State<BrowserPage> {
                             fontSize: 28,
                           ),
                         ),
-
                         const SizedBox(height: 15),
-
                         const Text(
                           "لطفاً اتصال اینترنت خود را بررسی کنید.",
                           textAlign: TextAlign.center,
@@ -462,34 +381,26 @@ class _BrowserPageState extends State<BrowserPage> {
                             fontSize: 20,
                           ),
                         ),
-
                         const SizedBox(height: 35),
-
                         ElevatedButton.icon(
-
                           onPressed: () async {
-
                             await _checkConnection();
 
                             if (hasInternet) {
                               controller?.reload();
                             }
-
                           },
-
                           icon: const Icon(Icons.refresh),
-
                           label: const Text(
                             "تلاش مجدد",
                           ),
-
                         ),
-
                       ],
                     ),
                   ),
                 ),
-                            ////////////////////////////////////////////////////
+
+              ////////////////////////////////////////////////////
               /// نوار پیشرفت
               ////////////////////////////////////////////////////
 
@@ -498,7 +409,6 @@ class _BrowserPageState extends State<BrowserPage> {
                   value: progress,
                   minHeight: 3,
                 ),
-
             ],
           ),
         ),
