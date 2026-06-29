@@ -235,13 +235,20 @@ class _BrowserPageState extends State<BrowserPage> {
                     useHybridComposition: true, // ثبت درست تاریخچه
                     transparentBackground: false,
                     disableContextMenu: true,
-                    supportMultipleWindows: true,
+                    supportMultipleWindows: false,
                     javaScriptCanOpenWindowsAutomatically: true,
-                    useShouldOverrideUrlLoading: true,
+                    useShouldOverrideUrlLoading: false,
                   ),
-                  onWebViewCreated: (c) {
-                    controller = c;
-                  },
+                  onWebViewCreated: (c) async {
+                  controller = c;
+
+                  await c.setSettings(
+                  settings: InAppWebViewSettings(
+                 userAgent:
+                     "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+                 ),
+                 );
+                 },
                   onLoadStart: (controller, url) {
                     if (!mounted) return;
                     setState(() => progress = 0);
@@ -255,17 +262,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     setState(() => progress = 1);
                   },
                   // ===== مدیریت لینک‌های جدید =====
-                  shouldOverrideUrlLoading: (controller, navigationAction) async {
-                    final url = navigationAction.request.url;
-                    if (url == null) return NavigationActionPolicy.ALLOW;
-
-                    // اگر پنجره جدید است، در همین WebView بارگذاری کن
-                    if (!navigationAction.isForMainFrame) {
-                      await controller.loadUrl(urlRequest: URLRequest(url: url));
-                      return NavigationActionPolicy.CANCEL;
-                    }
-                    return NavigationActionPolicy.ALLOW;
-                  },
+           
                   // ===== خطاهای JS (فقط در حالت debug) =====
                 onConsoleMessage: (controller, consoleMessage) {
                 debugPrint(consoleMessage.message);
