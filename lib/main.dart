@@ -257,10 +257,24 @@ class _BrowserPageState extends State<BrowserPage> {
                     if (!mounted) return;
                     setState(() => progress = value / 100);
                   },
-                  onLoadStop: (controller, url) async {
-                    if (!mounted) return;
-                    setState(() => progress = 1);
-                  },
+               onLoadStop: (controller, url) async {
+
+               await controller.evaluateJavascript(source: """
+               document.querySelectorAll('a,button').forEach(function(e){
+
+               if(e.innerText.trim().includes('بازگشت')){
+               e.onclick = function(event){
+               event.preventDefault();
+               window.location.href='https://www.sinapsycho.com/Consult/index';
+               }
+               }
+
+               });
+               """);
+
+  if (!mounted) return;
+  setState(() => progress = 1);
+},
                   // ===== مدیریت لینک‌های جدید =====
            
                   // ===== خطاهای JS (فقط در حالت debug) =====
