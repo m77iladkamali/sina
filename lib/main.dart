@@ -267,11 +267,9 @@ class _BrowserPageState extends State<BrowserPage> {
                     return NavigationActionPolicy.ALLOW;
                   },
                   // ===== خطاهای JS (فقط در حالت debug) =====
-                  onConsoleMessage: (controller, consoleMessage) {
-                    if (kDebugMode) {
-                      debugPrint("JS Console: ${consoleMessage.message}");
-                    }
-                  },
+                onConsoleMessage: (controller, consoleMessage) {
+                debugPrint(consoleMessage.message);
+                     },
                 ),
               if (!hasInternet)
                 Center(
