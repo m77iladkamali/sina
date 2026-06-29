@@ -232,7 +232,7 @@ class _BrowserPageState extends State<BrowserPage> {
                     mediaPlaybackRequiresUserGesture: false,
                     thirdPartyCookiesEnabled: true,
                     // ===== تنظیمات کلیدی =====
-                    useHybridComposition: false, // ثبت درست تاریخچه
+                    useHybridComposition: true, // ثبت درست تاریخچه
                     transparentBackground: false,
                     disableContextMenu: true,
                     supportMultipleWindows: true,
