@@ -140,6 +140,7 @@ class BrowserPage extends StatefulWidget {
 }
 
 class _BrowserPageState extends State<BrowserPage> {
+  DateTime? _lastBackPressed;
   InAppWebViewController? controller;
   double progress = 0;
   bool hasInternet = true;
@@ -172,33 +173,37 @@ class _BrowserPageState extends State<BrowserPage> {
     super.dispose();
   }
 
-  Future<bool> _onWillPop() async {
-    if (controller != null) {
-      final canGoBack = await controller!.canGoBack();
-      if (canGoBack) {
-        await controller!.goBack();
-        return false;
-      }
-    }
+Future<bool> _onWillPop() async {
+  if (controller != null) {
+    final canGoBack = await controller!.canGoBack();
 
-    // اگر به صفحه اول رسیدیم، دیالوگ خروج
-    final exit = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            title: const Text("خروج از برنامه", textAlign: TextAlign.center),
-            content: const Text("آیا مایل به خروج از برنامه هستید؟", textAlign: TextAlign.center),
-            actionsAlignment: MainAxisAlignment.spaceEvenly,
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("خیر")),
-              ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text("بله")),
-            ],
-          ),
-        ) ??
-        false;
-    return exit;
+    if (canGoBack) {
+      await controller!.goBack();
+      return false;
+    }
   }
+
+  final now = DateTime.now();
+
+  if (_lastBackPressed == null ||
+      now.difference(_lastBackPressed!) > const Duration(seconds: 2)) {
+    _lastBackPressed = now;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          "برای خروج مجدداً دکمه بازگشت را فشار دهید",
+          textAlign: TextAlign.center,
+        ),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    return false;
+  }
+
+  return true;
+}
 
   @override
   Widget build(BuildContext context) {
