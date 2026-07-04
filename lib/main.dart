@@ -192,7 +192,7 @@ Future<bool> _onWillPop() async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          "برای خروج مجدداً دکمه بازگشت را فشار دهید",
+          ".برای خروج، دوباره دکمه بازگشت را بزنید",
           textAlign: TextAlign.center,
         ),
         duration: Duration(seconds: 2),
