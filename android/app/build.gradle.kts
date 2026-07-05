@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.sina"
+    namespace = "com.sinapsycho.consult2"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
