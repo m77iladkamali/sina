@@ -77,7 +77,7 @@ class _WelcomePageState extends State<WelcomePage>
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  "به بخش مشاوره غیرحضوری سینا\n.خوش آمدید",
+                  "به بخش روان سنجی بر خط سینا\n.خوش آمدید",
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 30, color: Colors.white, height: 1.3),
                 ),
@@ -95,7 +95,7 @@ class _WelcomePageState extends State<WelcomePage>
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  "اینجا محیطی امن و راحت\n.برای یاری شماست",
+                  "برای بهتر بودن خود را\n.بهتر بشناسید",
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 24, color: Colors.white, height: 1.5),
                 ),
@@ -225,7 +225,7 @@ Future<bool> _onWillPop() async {
                     ),
                   },
                   initialUrlRequest: URLRequest(
-                    url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
+                    url: WebUri("https://www.sinapsycho.com/PsychometricAndroid/index"),
                   ),
                   initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
