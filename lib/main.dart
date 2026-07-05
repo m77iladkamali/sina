@@ -143,7 +143,6 @@ class MemoryGame extends StatefulWidget {
 }
 
 class _MemoryGameState extends State<MemoryGame> {
-  // نمونه ساده: ۶ کارت با ۳ جفت
   final List<String> _emojis = ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇'];
   late List<String> _cards;
   List<int> _opened = [];
@@ -539,7 +538,16 @@ class _NBackGameState extends State<NBackGame> {
 }
 
 // ========================= بازی واکنش (Reaction Time) =========================
-// (کد کامل از فایل قبلی، با اندکی تغییر برای سازگاری)
+// enum باید در سطح بالا تعریف شود
+enum GameStatus {
+  idle,
+  waiting,
+  ready,
+  early,
+  showingResult,
+  finished,
+}
+
 class ReactionTimeGame extends StatefulWidget {
   const ReactionTimeGame({super.key});
 
@@ -549,15 +557,6 @@ class ReactionTimeGame extends StatefulWidget {
 
 class _ReactionTimeGameState extends State<ReactionTimeGame>
     with SingleTickerProviderStateMixin {
-  enum GameStatus {
-    idle,
-    waiting,
-    ready,
-    early,
-    showingResult,
-    finished,
-  }
-
   GameStatus _status = GameStatus.idle;
   int _attemptCount = 0;
   final int _maxAttempts = 5;
@@ -764,6 +763,8 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
         return _buildResultScreen();
       case GameStatus.finished:
         return _buildFinalScreen();
+      default:
+        return const SizedBox.shrink(); // برای رفع خطای بازگشت
     }
   }
 
