@@ -2,52 +2,284 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:equatable/equatable.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+// ========================= بخش ۱: مدل‌ها و سرویس‌های داده =========================
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+/// مدل داده برای هر تلاش واکنش
+class ReactionAttempt extends Equatable {
+  final int timestamp;
+  final int reactionTimeMs;
+  final bool isEarly;
+
+  const ReactionAttempt({
+    required this.timestamp,
+    required this.reactionTimeMs,
+    this.isEarly = false,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'بازی‌های شناختی حرفه‌ای',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4A6CF7),
-          brightness: Brightness.light,
-        ),
-        fontFamily: 'Vazir',
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          centerTitle: true,
-        ),
-        cardTheme: CardTheme(
-          elevation: 6,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(120, 48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 2,
-          ),
-        ),
-      ),
-      home: const HomePage(),
+  List<Object?> get props => [timestamp, reactionTimeMs, isEarly];
+}
+
+/// سرویس ذخیره‌سازی با استفاده از SharedPreferences (برای نمونه)
+class StorageService {
+  static final StorageService _instance = StorageService._internal();
+  factory StorageService() => _instance;
+  StorageService._internal();
+
+  late SharedPreferences _prefs;
+
+  Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
+  }
+
+  Future<void> saveBestReactionTime(int time) async {
+    await _prefs.setInt('reaction_best', time);
+  }
+
+  int? getBestReactionTime() {
+    return _prefs.getInt('reaction_best');
+  }
+
+  // برای تاریخچه می‌توان از sqflite استفاده کرد
+}
+
+// ========================= بخش ۲: منطق بازی (Cubit) =========================
+
+/// وضعیت‌های بازی واکنش
+enum ReactionStatus {
+  idle,
+  waiting,
+  ready,
+  early,
+  showingResult,
+  finished,
+}
+
+/// رویدادهای بازی واکنش
+sealed class ReactionEvent {}
+
+class ReactionStarted extends ReactionEvent {}
+
+class ReactionTapped extends ReactionEvent {}
+
+class ReactionNextAttempt extends ReactionEvent {}
+
+class ReactionReset extends ReactionEvent {}
+
+class ReactionGoBack extends ReactionEvent {}
+
+/// وضعیت Cubit
+class ReactionState extends Equatable {
+  final ReactionStatus status;
+  final int attemptCount;
+  final int maxAttempts;
+  final List<int> times;
+  final int? bestOverall;
+  final int bestSession;
+  final int lastTime;
+  final String ratingMessage;
+  final String ratingStars;
+  final bool isProcessing;
+
+  const ReactionState({
+    this.status = ReactionStatus.idle,
+    this.attemptCount = 0,
+    this.maxAttempts = 5,
+    this.times = const [],
+    this.bestOverall,
+    this.bestSession = 0,
+    this.lastTime = 0,
+    this.ratingMessage = '',
+    this.ratingStars = '',
+    this.isProcessing = false,
+  });
+
+  double get average =>
+      times.isEmpty ? 0 : times.reduce((a, b) => a + b) / times.length;
+
+  ReactionState copyWith({
+    ReactionStatus? status,
+    int? attemptCount,
+    int? maxAttempts,
+    List<int>? times,
+    int? bestOverall,
+    int? bestSession,
+    int? lastTime,
+    String? ratingMessage,
+    String? ratingStars,
+    bool? isProcessing,
+  }) {
+    return ReactionState(
+      status: status ?? this.status,
+      attemptCount: attemptCount ?? this.attemptCount,
+      maxAttempts: maxAttempts ?? this.maxAttempts,
+      times: times ?? this.times,
+      bestOverall: bestOverall ?? this.bestOverall,
+      bestSession: bestSession ?? this.bestSession,
+      lastTime: lastTime ?? this.lastTime,
+      ratingMessage: ratingMessage ?? this.ratingMessage,
+      ratingStars: ratingStars ?? this.ratingStars,
+      isProcessing: isProcessing ?? this.isProcessing,
     );
+  }
+
+  @override
+  List<Object?> get props => [
+    status,
+    attemptCount,
+    maxAttempts,
+    times,
+    bestOverall,
+    bestSession,
+    lastTime,
+    ratingMessage,
+    ratingStars,
+    isProcessing,
+  ];
+}
+
+/// Cubit مدیریت بازی واکنش
+class ReactionCubit extends Cubit<ReactionState> {
+  final StorageService storage;
+  Timer? _waitTimer;
+  final Stopwatch _stopwatch = Stopwatch();
+
+  ReactionCubit(this.storage) : super(const ReactionState()) {
+    _loadBestOverall();
+  }
+
+  Future<void> _loadBestOverall() async {
+    final best = storage.getBestReactionTime();
+    if (best != null) {
+      emit(state.copyWith(bestOverall: best));
+    }
+  }
+
+  void startGame() {
+    emit(state.copyWith(
+      status: ReactionStatus.waiting,
+      attemptCount: 0,
+      times: [],
+      bestSession: 0,
+      isProcessing: false,
+    ));
+    _startTrial();
+  }
+
+  void _startTrial() {
+    if (state.attemptCount >= state.maxAttempts) {
+      emit(state.copyWith(status: ReactionStatus.finished, isProcessing: true));
+      return;
+    }
+    emit(state.copyWith(
+      status: ReactionStatus.waiting,
+      isProcessing: false,
+    ));
+    final delay = Random().nextInt(3000) + 2000;
+    _waitTimer = Timer(Duration(milliseconds: delay), () {
+      if (!isClosed && state.status == ReactionStatus.waiting) {
+        emit(state.copyWith(status: ReactionStatus.ready));
+        _stopwatch.reset();
+        _stopwatch.start();
+        HapticFeedback.lightImpact();
+      }
+    });
+  }
+
+  void handleTap() {
+    if (state.isProcessing) return;
+    switch (state.status) {
+      case ReactionStatus.waiting:
+        _waitTimer?.cancel();
+        emit(state.copyWith(
+          status: ReactionStatus.early,
+          isProcessing: true,
+        ));
+        Future.delayed(const Duration(seconds: 1), () {
+          if (!isClosed) {
+            emit(state.copyWith(isProcessing: false));
+            _startTrial();
+          }
+        });
+        break;
+      case ReactionStatus.ready:
+        _stopwatch.stop();
+        final time = _stopwatch.elapsedMilliseconds;
+        final newTimes = [...state.times, time];
+        final newBestSession = state.bestSession == 0 || time < state.bestSession
+            ? time
+            : state.bestSession;
+        final newBestOverall = state.bestOverall == null || time < state.bestOverall!
+            ? time
+            : state.bestOverall;
+        if (newBestOverall != state.bestOverall) {
+          storage.saveBestReactionTime(newBestOverall!);
+        }
+        final rating = _getRating(time);
+        emit(state.copyWith(
+          status: ReactionStatus.showingResult,
+          times: newTimes,
+          bestSession: newBestSession,
+          bestOverall: newBestOverall,
+          lastTime: time,
+          ratingMessage: rating['message']!,
+          ratingStars: rating['stars']!,
+          isProcessing: true,
+        ));
+        break;
+      default:
+        break;
+    }
+  }
+
+  Map<String, String> _getRating(int time) {
+    if (time < 200) return {'stars': '⭐⭐⭐⭐⭐', 'message': 'عالی!'};
+    if (time < 250) return {'stars': '⭐⭐⭐⭐', 'message': 'بسیار خوب'};
+    if (time < 320) return {'stars': '⭐⭐⭐', 'message': 'خوب'};
+    if (time < 450) return {'stars': '⭐⭐', 'message': 'متوسط'};
+    return {'stars': '⭐', 'message': 'نیاز به تمرین'};
+  }
+
+  void nextAttempt() {
+    final newCount = state.attemptCount + 1;
+    emit(state.copyWith(
+      attemptCount: newCount,
+      isProcessing: false,
+    ));
+    if (newCount >= state.maxAttempts) {
+      emit(state.copyWith(status: ReactionStatus.finished, isProcessing: true));
+    } else {
+      _startTrial();
+    }
+  }
+
+  void reset() {
+    _waitTimer?.cancel();
+    emit(const ReactionState());
+    _loadBestOverall();
+  }
+
+  void goBack() {
+    _waitTimer?.cancel();
+    // خروج از بازی (توسط Navigator مدیریت می‌شود)
+  }
+
+  @override
+  Future<void> close() {
+    _waitTimer?.cancel();
+    return super.close();
   }
 }
 
-// ===================== صفحه اصلی با طراحی کارت‌های زیبا =====================
+// ========================= بخش ۳: ویجت‌های رابط کاربری =========================
+
+/// صفحه اصلی با منوی بازی‌ها
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -55,9 +287,21 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🧠 تمرین‌های شناختی'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Colors.white,
+        title: const Text('🧠 شناخت‌یار'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart),
+            onPressed: () {
+              // نمایش آمار کلی
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.brightness_6),
+            onPressed: () {
+              // تغییر تم
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -68,41 +312,19 @@ class HomePage extends StatelessWidget {
             mainAxisSpacing: 16,
             childAspectRatio: 1.1,
             children: [
-              _buildGameCard(
-                context,
-                title: 'حافظه',
-                icon: Icons.memory,
-                color: const Color(0xFF7C4DFF),
-                onTap: () => _navigateTo(context, const MemoryGame()),
-              ),
-              _buildGameCard(
-                context,
-                title: 'استروپ',
-                icon: Icons.color_lens,
-                color: const Color(0xFFFF6F00),
-                onTap: () => _navigateTo(context, const StroopGame()),
-              ),
-              _buildGameCard(
-                context,
-                title: 'N-Back',
-                icon: Icons.numbers,
-                color: const Color(0xFF00897B),
-                onTap: () => _navigateTo(context, const NBackGame()),
-              ),
-              _buildGameCard(
-                context,
-                title: 'واکنش',
-                icon: Icons.timer,
-                color: const Color(0xFF1976D2),
-                onTap: () => _navigateTo(context, const ReactionTimeGame()),
-              ),
-              _buildGameCard(
-                context,
-                title: 'ترتیب اعداد',
-                icon: Icons.sort,
-                color: const Color(0xFFC62828),
-                onTap: () => _navigateTo(context, const NumberSequenceGame()),
-              ),
+              _gameCard(context, 'حافظه', Icons.memory, const Color(0xFF7C4DFF),
+                  () => _navigateTo(context, const MemoryGame())),
+              _gameCard(context, 'استروپ', Icons.color_lens, const Color(0xFFFF6F00),
+                  () => _navigateTo(context, const StroopGame())),
+              _gameCard(context, 'N-Back', Icons.numbers, const Color(0xFF00897B),
+                  () => _navigateTo(context, const NBackGame())),
+              _gameCard(context, 'واکنش', Icons.timer, const Color(0xFF1976D2),
+                  () => _navigateTo(context, BlocProvider.value(
+                        value: ReactionCubit(StorageService()),
+                        child: const ReactionGame(),
+                      ))),
+              _gameCard(context, 'ترتیب اعداد', Icons.sort, const Color(0xFFC62828),
+                  () => _navigateTo(context, const NumberSequenceGame())),
             ],
           ),
         ),
@@ -110,11 +332,8 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Widget _buildGameCard(BuildContext context,
-      {required String title,
-      required IconData icon,
-      required Color color,
-      required VoidCallback onTap}) {
+  Widget _gameCard(BuildContext context, String title, IconData icon, Color color,
+      VoidCallback onTap) {
     return Card(
       elevation: 8,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -141,7 +360,6 @@ class HomePage extends StatelessWidget {
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
-                  shadows: [Shadow(blurRadius: 4, color: Colors.black26)],
                 ),
               ),
             ],
@@ -156,838 +374,42 @@ class HomePage extends StatelessWidget {
       context,
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => page,
-        transitionsBuilder: (_, animation, __, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
       ),
     );
   }
 }
 
-// ===================== بازی حافظه (پیشرفته) =====================
-class MemoryGame extends StatefulWidget {
-  const MemoryGame({super.key});
-
-  @override
-  State<MemoryGame> createState() => _MemoryGameState();
-}
-
-class _MemoryGameState extends State<MemoryGame> with TickerProviderStateMixin {
-  // سطوح دشواری
-  enum Difficulty { easy, medium, hard }
-  Difficulty _difficulty = Difficulty.easy;
-
-  late List<String> _cards;
-  final List<int> _opened = [];
-  final List<int> _matched = [];
-  int _attempts = 0;
-  int _pairsFound = 0;
-  late AnimationController _flipController;
-  bool _isProcessing = false;
-
-  // پیکربندی کارت‌ها بر اساس دشواری
-  List<String> get _emojis {
-    switch (_difficulty) {
-      case Difficulty.easy:
-        return ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇']; // 3 جفت
-      case Difficulty.medium:
-        return ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇', '🍒', '🍒', '🍊', '🍊']; // 5 جفت
-      case Difficulty.hard:
-        return [
-          '🍎', '🍎', '🍌', '🍌', '🍇', '🍇',
-          '🍒', '🍒', '🍊', '🍊', '🍉', '🍉', '🍓', '🍓'
-        ]; // 7 جفت
-    }
-  }
-
-  int get _gridColumns {
-    switch (_difficulty) {
-      case Difficulty.easy:
-        return 3;
-      case Difficulty.medium:
-        return 4;
-      case Difficulty.hard:
-        return 4;
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _flipController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _initGame();
-  }
-
-  @override
-  void dispose() {
-    _flipController.dispose();
-    super.dispose();
-  }
-
-  void _initGame() {
-    final list = _emojis;
-    _cards = List.from(list)..shuffle();
-    _opened.clear();
-    _matched.clear();
-    _attempts = 0;
-    _pairsFound = 0;
-    _isProcessing = false;
-  }
-
-  void _onCardTap(int index) {
-    if (_isProcessing) return;
-    if (_opened.length == 2 || _opened.contains(index) || _matched.contains(index)) return;
-
-    setState(() {
-      _opened.add(index);
-      _flipController.forward(from: 0);
-    });
-
-    if (_opened.length == 2) {
-      _isProcessing = true;
-      _attempts++;
-      if (_cards[_opened[0]] == _cards[_opened[1]]) {
-        setState(() {
-          _matched.addAll(_opened);
-          _pairsFound++;
-          _opened.clear();
-          _isProcessing = false;
-        });
-        HapticFeedback.lightImpact();
-        if (_pairsFound == _cards.length ~/ 2) {
-          _showWinDialog();
-        }
-      } else {
-        Future.delayed(const Duration(milliseconds: 700), () {
-          setState(() {
-            _opened.clear();
-            _isProcessing = false;
-          });
-          HapticFeedback.heavyImpact();
-        });
-      }
-    }
-  }
-
-  void _showWinDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('🎉 تبریک!'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('همه جفت‌ها را پیدا کردید!'),
-            const SizedBox(height: 8),
-            Text('تعداد تلاش: $_attempts'),
-            const SizedBox(height: 8),
-            Text('سطح: ${_difficulty.name}'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() => _initGame());
-            },
-            child: const Text('دوباره'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('بازگشت'),
-          ),
-        ],
-      ),
-    );
-  }
+/// بازی واکنش (با استفاده از Cubit)
+class ReactionGame extends StatelessWidget {
+  const ReactionGame({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('بازی حافظه'),
-        centerTitle: true,
-        actions: [
-          DropdownButton<Difficulty>(
-            value: _difficulty,
-            dropdownColor: Colors.white,
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _difficulty = value;
-                  _initGame();
-                });
-              }
-            },
-            items: Difficulty.values.map((d) {
-              return DropdownMenuItem(
-                value: d,
-                child: Text(d.name, style: const TextStyle(color: Colors.black)),
-              );
-            }).toList(),
-          ),
-          IconButton(
-            onPressed: () => setState(() => _initGame()),
-            icon: const Icon(Icons.shuffle),
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('تلاش: $_attempts', style: const TextStyle(fontSize: 18)),
-                Text('جفت‌ها: $_pairsFound/${_cards.length ~/ 2}',
-                    style: const TextStyle(fontSize: 18)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: GridView.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: _gridColumns,
-                  childAspectRatio: 1,
-                  crossAxisSpacing: 8,
-                  mainAxisSpacing: 8,
-                ),
-                itemCount: _cards.length,
-                itemBuilder: (ctx, i) {
-                  final isOpen = _opened.contains(i) || _matched.contains(i);
-                  return GestureDetector(
-                    onTap: () => _onCardTap(i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeInOut,
-                      decoration: BoxDecoration(
-                        color: isOpen ? Colors.white : Colors.blue.shade100,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          child: Text(
-                            isOpen ? _cards[i] : '?',
-                            key: ValueKey(isOpen),
-                            style: const TextStyle(fontSize: 36),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+    return BlocProvider(
+      create: (_) => ReactionCubit(StorageService()),
+      child: const _ReactionView(),
     );
   }
 }
 
-// ===================== بازی استروپ (پیشرفته) =====================
-class StroopGame extends StatefulWidget {
-  const StroopGame({super.key});
-
-  @override
-  State<StroopGame> createState() => _StroopGameState();
-}
-
-class _StroopGameState extends State<StroopGame> {
-  final List<String> _colorNames = ['قرمز', 'آبی', 'سبز', 'زرد', 'بنفش'];
-  final List<Color> _colorValues = [
-    Colors.red,
-    Colors.blue,
-    Colors.green,
-    Colors.yellow,
-    Colors.purple
-  ];
-  late String _word;
-  late Color _textColor;
-  int _score = 0;
-  int _total = 0;
-  int _rounds = 10;
-  bool _isAnswered = false;
-  final List<bool> _history = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _nextRound();
-  }
-
-  void _nextRound() {
-    if (_total >= _rounds) {
-      _showResult();
-      return;
-    }
-    final rng = Random();
-    final wordIndex = rng.nextInt(_colorNames.length);
-    final colorIndex = rng.nextInt(_colorValues.length);
-    setState(() {
-      _word = _colorNames[wordIndex];
-      _textColor = _colorValues[colorIndex];
-      _isAnswered = false;
-    });
-  }
-
-  void _answer(bool isCongruent) {
-    if (_isAnswered) return;
-    _isAnswered = true;
-    final correct = _word == _getColorName(_textColor);
-    final userCorrect = (correct && isCongruent) || (!correct && !isCongruent);
-    if (userCorrect) {
-      setState(() => _score++);
-      HapticFeedback.lightImpact();
-    } else {
-      HapticFeedback.heavyImpact();
-    }
-    _history.add(userCorrect);
-    setState(() => _total++);
-    Future.delayed(const Duration(milliseconds: 500), _nextRound);
-  }
-
-  String _getColorName(Color c) {
-    if (c == Colors.red) return 'قرمز';
-    if (c == Colors.blue) return 'آبی';
-    if (c == Colors.green) return 'سبز';
-    if (c == Colors.yellow) return 'زرد';
-    if (c == Colors.purple) return 'بنفش';
-    return '';
-  }
-
-  void _showResult() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('نتیجه استروپ'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('امتیاز: $_score از $_rounds'),
-            const SizedBox(height: 8),
-            Text('دقت: ${(_score / _rounds * 100).toStringAsFixed(0)}%'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _score = 0;
-                _total = 0;
-                _history.clear();
-                _nextRound();
-              });
-            },
-            child: const Text('دوباره'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('بازگشت'),
-          ),
-        ],
-      ),
-    );
-  }
+class _ReactionView extends StatelessWidget {
+  const _ReactionView();
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('تست استروپ'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            onPressed: () {
-              setState(() {
-                _score = 0;
-                _total = 0;
-                _history.clear();
-                _nextRound();
-              });
-            },
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (_total < _rounds) ...[
-              Text(
-                _word,
-                style: TextStyle(
-                  fontSize: 64,
-                  fontWeight: FontWeight.bold,
-                  color: _textColor,
-                  shadows: [const Shadow(blurRadius: 4, color: Colors.black26)],
-                ),
-              ),
-              const SizedBox(height: 40),
-              const Text(
-                'رنگ کلمه چیست؟ (نه معنی آن!)',
-                style: TextStyle(fontSize: 18),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton(
-                    onPressed: () => _answer(true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('همخوان'),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton(
-                    onPressed: () => _answer(false),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('ناهمخوان'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 32),
-              Text('پیشرفت: $_total / $_rounds'),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: _total / _rounds,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: const AlwaysStoppedAnimation(Colors.blue),
-              ),
-            ] else
-              const CircularProgressIndicator(),
-          ],
-        ),
-      ),
-    );
-  }
-}
+    final cubit = context.watch<ReactionCubit>();
+    final state = cubit.state;
 
-// ===================== بازی N-Back (پیشرفته) =====================
-class NBackGame extends StatefulWidget {
-  const NBackGame({super.key});
-
-  @override
-  State<NBackGame> createState() => _NBackGameState();
-}
-
-class _NBackGameState extends State<NBackGame> {
-  int _n = 2;
-  List<int> _sequence = [];
-  int _currentIndex = 0;
-  int _score = 0;
-  int _total = 0;
-  bool _gameOver = false;
-  int _correct = 0;
-  int _incorrect = 0;
-
-  final List<int> _sequenceLengths = [15, 20, 25];
-
-  @override
-  void initState() {
-    super.initState();
-    _startGame();
-  }
-
-  void _startGame() {
-    final length = _sequenceLengths[_n - 1];
-    setState(() {
-      _sequence = List.generate(length, (_) => Random().nextInt(9) + 1);
-      _currentIndex = 0;
-      _score = 0;
-      _total = 0;
-      _gameOver = false;
-      _correct = 0;
-      _incorrect = 0;
-    });
-  }
-
-  void _nextNumber() {
-    if (_currentIndex >= _sequence.length) {
-      setState(() => _gameOver = true);
-      _showResult();
-      return;
-    }
-    setState(() {
-      _currentIndex++;
-    });
-  }
-
-  void _checkMatch(bool isMatch) {
-    if (_currentIndex < _n) {
-      _nextNumber();
-      return;
-    }
-    final actualMatch = _sequence[_currentIndex] == _sequence[_currentIndex - _n];
-    final userCorrect = (isMatch == actualMatch);
-    if (userCorrect) {
-      setState(() {
-        _score++;
-        _correct++;
-      });
-      HapticFeedback.lightImpact();
-    } else {
-      setState(() => _incorrect++);
-      HapticFeedback.heavyImpact();
-    }
-    setState(() => _total++);
-    _nextNumber();
-  }
-
-  void _showResult() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('نتیجه N-Back'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('امتیاز: $_score از $_total'),
-            const SizedBox(height: 8),
-            Text('درست: $_correct | غلط: $_incorrect'),
-            const SizedBox(height: 8),
-            Text('دقت: ${_total > 0 ? (_score / _total * 100).toStringAsFixed(0) : 0}%'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _startGame();
-            },
-            child: const Text('دوباره'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('بازگشت'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('بازی N-Back'),
-        centerTitle: true,
-        actions: [
-          DropdownButton<int>(
-            value: _n,
-            dropdownColor: Colors.white,
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _n = value;
-                  _startGame();
-                });
-              }
-            },
-            items: [1, 2, 3].map((n) {
-              return DropdownMenuItem(
-                value: n,
-                child: Text('${n}-Back', style: const TextStyle(color: Colors.black)),
-              );
-            }).toList(),
-          ),
-          IconButton(
-            onPressed: _startGame,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (!_gameOver && _currentIndex < _sequence.length)
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 400),
-                child: Text(
-                  '${_sequence[_currentIndex]}',
-                  key: ValueKey(_currentIndex),
-                  style: const TextStyle(
-                    fontSize: 72,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue,
-                  ),
-                ),
-              )
-            else
-              const Text('پایان بازی', style: TextStyle(fontSize: 24)),
-            const SizedBox(height: 40),
-            if (!_gameOver && _currentIndex < _sequence.length) ...[
-              Text('آیا این عدد با عدد $_n مرحله قبل یکسان است؟'),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton(
-                    onPressed: () => _checkMatch(true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('بله'),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton(
-                    onPressed: () => _checkMatch(false),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('خیر'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text('پیشرفت: ${_currentIndex + 1} / ${_sequence.length}'),
-              LinearProgressIndicator(
-                value: (_currentIndex + 1) / _sequence.length,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: const AlwaysStoppedAnimation(Colors.blue),
-              ),
-            ],
-            const SizedBox(height: 32),
-            OutlinedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('بازگشت'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ===================== بازی واکنش (کاملاً حرفه‌ای) =====================
-// تعریف enum در سطح بالا
-enum GameStatus {
-  idle,
-  waiting,
-  ready,
-  early,
-  showingResult,
-  finished,
-}
-
-class ReactionTimeGame extends StatefulWidget {
-  const ReactionTimeGame({super.key});
-
-  @override
-  State<ReactionTimeGame> createState() => _ReactionTimeGameState();
-}
-
-class _ReactionTimeGameState extends State<ReactionTimeGame>
-    with SingleTickerProviderStateMixin {
-  GameStatus _status = GameStatus.idle;
-  int _attemptCount = 0;
-  final int _maxAttempts = 5;
-  List<int> _reactionTimes = [];
-  int? _bestOverall;
-  int _bestSession = 0;
-  int _lastReactionTime = 0;
-  String _ratingMessage = '';
-  String _ratingStars = '';
-
-  Timer? _waitTimer;
-  final Stopwatch _stopwatch = Stopwatch();
-  late AnimationController _pulseController;
-  Color _circleColor = Colors.grey.shade400;
-  bool _isProcessing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-    _loadBestOverall();
-  }
-
-  @override
-  void dispose() {
-    _waitTimer?.cancel();
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadBestOverall() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _bestOverall = prefs.getInt('reaction_best');
-    });
-  }
-
-  Future<void> _saveBestOverall(int time) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('reaction_best', time);
-  }
-
-  void _startGame() {
-    setState(() {
-      _status = GameStatus.waiting;
-      _attemptCount = 0;
-      _reactionTimes.clear();
-      _bestSession = 0;
-      _circleColor = Colors.grey.shade400;
-    });
-    _startTrial();
-  }
-
-  void _startTrial() {
-    if (_attemptCount >= _maxAttempts) {
-      _finishGame();
-      return;
-    }
-    setState(() {
-      _status = GameStatus.waiting;
-      _circleColor = Colors.grey.shade400;
-      _isProcessing = false;
-    });
-    final delay = Random().nextInt(3000) + 2000;
-    _waitTimer = Timer(Duration(milliseconds: delay), () {
-      if (mounted && _status == GameStatus.waiting) {
-        setState(() {
-          _status = GameStatus.ready;
-          _circleColor = Colors.green;
-          _stopwatch.reset();
-          _stopwatch.start();
-          _pulseController.forward(from: 0);
-        });
-        HapticFeedback.lightImpact();
-      }
-    });
-  }
-
-  void _handleTap() {
-    if (_isProcessing) return;
-    switch (_status) {
-      case GameStatus.waiting:
-        setState(() {
-          _status = GameStatus.early;
-          _isProcessing = true;
-          _circleColor = Colors.red.shade300;
-        });
-        _waitTimer?.cancel();
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            setState(() => _isProcessing = false);
-            _startTrial();
-          }
-        });
-        break;
-      case GameStatus.ready:
-        _stopwatch.stop();
-        final time = _stopwatch.elapsedMilliseconds;
-        _lastReactionTime = time;
-        _reactionTimes.add(time);
-        if (_bestSession == 0 || time < _bestSession) _bestSession = time;
-        if (_bestOverall == null || time < _bestOverall!) {
-          _bestOverall = time;
-          _saveBestOverall(time);
-        }
-        final rating = _getRating(time);
-        _ratingStars = rating['stars']!;
-        _ratingMessage = rating['message']!;
-        setState(() {
-          _status = GameStatus.showingResult;
-          _isProcessing = true;
-          _circleColor = Colors.green;
-        });
-        break;
-      default:
-        break;
-    }
-  }
-
-  void _nextAttempt() {
-    setState(() {
-      _attemptCount++;
-      _isProcessing = false;
-    });
-    if (_attemptCount >= _maxAttempts) {
-      _finishGame();
-    } else {
-      _startTrial();
-    }
-  }
-
-  void _finishGame() {
-    setState(() {
-      _status = GameStatus.finished;
-      _isProcessing = true;
-      _circleColor = Colors.grey.shade400;
-    });
-  }
-
-  Map<String, String> _getRating(int time) {
-    if (time < 200) return {'stars': '⭐⭐⭐⭐⭐', 'message': 'عالی! واکنش فوق‌العاده'};
-    if (time < 250) return {'stars': '⭐⭐⭐⭐', 'message': 'بسیار خوب! سریع و دقیق'};
-    if (time < 320) return {'stars': '⭐⭐⭐', 'message': 'خوب! می‌توانید بهتر شوید'};
-    if (time < 450) return {'stars': '⭐⭐', 'message': 'متوسط، تمرین بیشتر نیاز است'};
-    return {'stars': '⭐', 'message': 'نیاز به تمرین جدی دارید'};
-  }
-
-  double _getAverage() {
-    if (_reactionTimes.isEmpty) return 0;
-    return _reactionTimes.reduce((a, b) => a + b) / _reactionTimes.length;
-  }
-
-  void _resetGame() {
-    setState(() {
-      _status = GameStatus.idle;
-      _attemptCount = 0;
-      _reactionTimes.clear();
-      _lastReactionTime = 0;
-      _circleColor = Colors.grey.shade400;
-      _isProcessing = false;
-    });
-    _waitTimer?.cancel();
-  }
-
-  void _goBack() {
-    _waitTimer?.cancel();
-    Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('زمان واکنش'),
         centerTitle: true,
         actions: [
-          if (_status != GameStatus.idle)
+          if (state.status != ReactionStatus.idle)
             IconButton(
-              onPressed: _resetGame,
+              onPressed: cubit.reset,
               icon: const Icon(Icons.refresh),
             ),
         ],
@@ -995,45 +417,50 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
-          child: Center(child: _buildBody()),
+          child: Center(
+            child: _buildBody(context, state, cubit),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildBody() {
-    switch (_status) {
-      case GameStatus.idle:
-        return _buildIdleScreen();
-      case GameStatus.waiting:
-      case GameStatus.ready:
-      case GameStatus.early:
-        return _buildGameScreen();
-      case GameStatus.showingResult:
-        return _buildResultScreen();
-      case GameStatus.finished:
-        return _buildFinalScreen();
+  Widget _buildBody(
+      BuildContext context, ReactionState state, ReactionCubit cubit) {
+    switch (state.status) {
+      case ReactionStatus.idle:
+        return _IdleScreen(state: state, onStart: cubit.startGame);
+      case ReactionStatus.waiting:
+      case ReactionStatus.ready:
+      case ReactionStatus.early:
+        return _GameScreen(state: state, onTap: cubit.handleTap);
+      case ReactionStatus.showingResult:
+        return _ResultScreen(state: state, onNext: cubit.nextAttempt, onReset: cubit.reset);
+      case ReactionStatus.finished:
+        return _FinishScreen(state: state, onReset: cubit.reset, onBack: cubit.goBack);
       default:
         return const SizedBox.shrink();
     }
   }
+}
 
-  Widget _buildIdleScreen() {
+// ویجت‌های فرعی (ساده‌سازی شده برای اختصار)
+class _IdleScreen extends StatelessWidget {
+  final ReactionState state;
+  final VoidCallback onStart;
+
+  const _IdleScreen({required this.state, required this.onStart});
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
-          '⏱ زمان واکنش',
-          style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-        ),
+        const Text('⏱ زمان واکنش', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
-        const Text(
-          'پس از سبز شدن دایره، در سریع‌ترین زمان ممکن ضربه بزنید.',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16),
-        ),
+        const Text('پس از سبز شدن دایره، در سریع‌ترین زمان ممکن ضربه بزنید.'),
         const SizedBox(height: 24),
-        if (_bestOverall != null)
+        if (state.bestOverall != null)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -1041,143 +468,140 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.green.shade200),
             ),
-            child: Text(
-              '🏆 بهترین رکورد شما: $_bestOverall ms',
-              style: const TextStyle(fontSize: 18, color: Colors.green),
-            ),
+            child: Text('🏆 بهترین رکورد: ${state.bestOverall} ms'),
           ),
         const SizedBox(height: 40),
         ElevatedButton.icon(
-          onPressed: _startGame,
+          onPressed: onStart,
           icon: const Icon(Icons.play_arrow),
           label: const Text('شروع', style: TextStyle(fontSize: 20)),
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(200, 56),
-          ),
-        ),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: _goBack,
-          icon: const Icon(Icons.arrow_back),
-          label: const Text('بازگشت'),
+          style: ElevatedButton.styleFrom(minimumSize: const Size(200, 56)),
         ),
       ],
     );
   }
+}
 
-  Widget _buildGameScreen() {
+class _GameScreen extends StatelessWidget {
+  final ReactionState state;
+  final VoidCallback onTap;
+
+  const _GameScreen({required this.state, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
     String statusText;
     Color statusColor;
-    if (_status == GameStatus.waiting) {
+    if (state.status == ReactionStatus.waiting) {
       statusText = '⏳ منتظر بمانید...';
       statusColor = Colors.grey;
-    } else if (_status == GameStatus.ready) {
+    } else if (state.status == ReactionStatus.ready) {
       statusText = '⚡ سریع لمس کن!';
       statusColor = Colors.green;
-    } else if (_status == GameStatus.early) {
-      statusText = '❌ خیلی زود! دوباره تلاش کنید.';
-      statusColor = Colors.red;
     } else {
-      statusText = '';
-      statusColor = Colors.grey;
+      statusText = '❌ خیلی زود!';
+      statusColor = Colors.red;
     }
+    final color = state.status == ReactionStatus.ready
+        ? Colors.green
+        : state.status == ReactionStatus.early
+            ? Colors.red.shade300
+            : Colors.grey.shade400;
+
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          'تلاش ${_attemptCount + 1} از $_maxAttempts',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        Text('تلاش ${state.attemptCount + 1} از ${state.maxAttempts}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 40),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          width: 160,
+          height: 160,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: color.withOpacity(0.5), blurRadius: 30, spreadRadius: 10),
+            ],
+          ),
+          child: GestureDetector(
+            onTap: onTap,
+            behavior: HitTestBehavior.opaque,
+            child: const SizedBox.expand(),
+          ),
         ),
         const SizedBox(height: 40),
-        AnimatedBuilder(
-          animation: _pulseController,
-          builder: (_, child) {
-            final scale = 1 + 0.05 * _pulseController.value;
-            return Transform.scale(
-              scale: _status == GameStatus.ready ? scale : 1.0,
-              child: Container(
-                width: 160,
-                height: 160,
-                decoration: BoxDecoration(
-                  color: _circleColor,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: _circleColor.withOpacity(0.5),
-                      blurRadius: 30,
-                      spreadRadius: 10,
-                    ),
-                  ],
-                ),
-                child: GestureDetector(
-                  onTap: _handleTap,
-                  behavior: HitTestBehavior.opaque,
-                  child: Container(
-                    width: double.infinity,
-                    height: double.infinity,
-                    decoration: const BoxDecoration(shape: BoxShape.circle),
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 40),
-        Text(
-          statusText,
-          style: TextStyle(fontSize: 20, color: statusColor),
-        ),
+        Text(statusText, style: TextStyle(fontSize: 20, color: statusColor)),
       ],
     );
   }
+}
 
-  Widget _buildResultScreen() {
+class _ResultScreen extends StatelessWidget {
+  final ReactionState state;
+  final VoidCallback onNext;
+  final VoidCallback onReset;
+
+  const _ResultScreen({
+    required this.state,
+    required this.onNext,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         TweenAnimationBuilder(
-          tween: Tween<double>(begin: 0, end: _lastReactionTime.toDouble()),
+          tween: Tween<double>(begin: 0, end: state.lastTime.toDouble()),
           duration: const Duration(milliseconds: 500),
-          builder: (_, value, __) {
-            return Text(
-              '${value.toInt()} ms',
-              style: const TextStyle(
-                fontSize: 52,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            );
-          },
+          builder: (_, value, __) => Text(
+            '${value.toInt()} ms',
+            style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.blue),
+          ),
         ),
         const SizedBox(height: 8),
-        Text(_ratingStars, style: const TextStyle(fontSize: 32)),
+        Text(state.ratingStars, style: const TextStyle(fontSize: 32)),
         const SizedBox(height: 4),
-        Text(_ratingMessage, style: const TextStyle(fontSize: 20)),
+        Text(state.ratingMessage, style: const TextStyle(fontSize: 20)),
         const SizedBox(height: 24),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             ElevatedButton.icon(
-              onPressed: _nextAttempt,
-              icon: Icon(_attemptCount + 1 >= _maxAttempts ? Icons.flag : Icons.arrow_forward),
-              label: Text(_attemptCount + 1 >= _maxAttempts ? 'پایان' : 'تلاش بعدی'),
+              onPressed: onNext,
+              icon: Icon(state.attemptCount + 1 >= state.maxAttempts ? Icons.flag : Icons.arrow_forward),
+              label: Text(state.attemptCount + 1 >= state.maxAttempts ? 'پایان' : 'تلاش بعدی'),
             ),
             const SizedBox(width: 16),
             OutlinedButton.icon(
-              onPressed: _resetGame,
+              onPressed: onReset,
               icon: const Icon(Icons.refresh),
               label: const Text('شروع مجدد'),
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        Text('تلاش ${_attemptCount + 1} از $_maxAttempts'),
       ],
     );
   }
+}
 
-  Widget _buildFinalScreen() {
-    final avg = _getAverage();
+class _FinishScreen extends StatelessWidget {
+  final ReactionState state;
+  final VoidCallback onReset;
+  final VoidCallback onBack;
+
+  const _FinishScreen({
+    required this.state,
+    required this.onReset,
+    required this.onBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final avg = state.average;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -1189,31 +613,27 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                _buildStatRow('میانگین زمان', '${avg.toStringAsFixed(0)} ms'),
-                _buildStatRow('بهترین زمان این جلسه', '$_bestSession ms'),
-                if (_bestOverall != null) _buildStatRow('بهترین رکورد کلی', '$_bestOverall ms'),
+                _statRow('میانگین', '${avg.toStringAsFixed(0)} ms'),
+                _statRow('بهترین جلسه', '${state.bestSession} ms'),
+                if (state.bestOverall != null) _statRow('رکورد کلی', '${state.bestOverall} ms'),
               ],
             ),
           ),
         ),
         const SizedBox(height: 32),
-        Text(
-          _getOverallRating(avg),
-          style: const TextStyle(fontSize: 18),
-          textAlign: TextAlign.center,
-        ),
+        Text(_getOverallRating(avg)),
         const SizedBox(height: 32),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             ElevatedButton.icon(
-              onPressed: _resetGame,
+              onPressed: onReset,
               icon: const Icon(Icons.replay),
-              label: const Text('دوباره بازی'),
+              label: const Text('دوباره'),
             ),
             const SizedBox(width: 16),
             OutlinedButton.icon(
-              onPressed: _goBack,
+              onPressed: onBack,
               icon: const Icon(Icons.home),
               label: const Text('خانه'),
             ),
@@ -1223,212 +643,105 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
     );
   }
 
-  Widget _buildStatRow(String label, String value) {
+  Widget _statRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(fontSize: 18)),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
+          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
   String _getOverallRating(double avg) {
-    if (avg < 220) return '🌟 شما واکنش‌های بسیار سریعی دارید!';
-    if (avg < 280) return '👍 عملکرد خوب، با تمرین بیشتر عالی می‌شوید.';
-    if (avg < 350) return '📈 جای پیشرفت دارید، ادامه دهید!';
-    return '💪 تمرین منظم به شما کمک می‌کند تا سریع‌تر شوید.';
+    if (avg < 220) return '🌟 عالی!';
+    if (avg < 280) return '👍 خوب';
+    if (avg < 350) return '📈 قابل قبول';
+    return '💪 نیاز به تمرین';
   }
 }
 
-// ===================== بازی ترتیب اعداد (پیشرفته) =====================
-class NumberSequenceGame extends StatefulWidget {
-  const NumberSequenceGame({super.key});
+// ===================== سایر بازی‌ها (ساده‌سازی شده) =====================
 
-  @override
-  State<NumberSequenceGame> createState() => _NumberSequenceGameState();
-}
-
-class _NumberSequenceGameState extends State<NumberSequenceGame> {
-  List<int> _sequence = [];
-  int _currentIndex = 0;
-  int _score = 0;
-  bool _gameOver = false;
-  int _mistakes = 0;
-  int _count = 8;
-
-  @override
-  void initState() {
-    super.initState();
-    _newGame();
-  }
-
-  void _newGame() {
-    _sequence = List.generate(_count, (_) => Random().nextInt(100) + 1);
-    _sequence.shuffle();
-    _currentIndex = 0;
-    _score = 0;
-    _gameOver = false;
-    _mistakes = 0;
-  }
-
-  void _checkNumber(int number) {
-    if (_gameOver) return;
-    if (number == _sequence[_currentIndex]) {
-      setState(() {
-        _score++;
-        _currentIndex++;
-        HapticFeedback.lightImpact();
-        if (_currentIndex == _sequence.length) {
-          _gameOver = true;
-          _showResult();
-        }
-      });
-    } else {
-      setState(() {
-        _gameOver = true;
-        _mistakes++;
-        HapticFeedback.heavyImpact();
-        _showResult();
-      });
-    }
-  }
-
-  void _showResult() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('نتیجه ترتیب اعداد'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('امتیاز: $_score از ${_sequence.length}'),
-            const SizedBox(height: 8),
-            Text('تعداد اشتباه: $_mistakes'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _newGame();
-            },
-            child: const Text('دوباره'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('بازگشت'),
-          ),
-        ],
-      ),
-    );
-  }
+// بازی حافظه (نمونه)
+class MemoryGame extends StatelessWidget {
+  const MemoryGame({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('ترتیب اعداد'),
-        centerTitle: true,
-        actions: [
-          DropdownButton<int>(
-            value: _count,
-            dropdownColor: Colors.white,
-            icon: const Icon(Icons.settings, color: Colors.white),
-            onChanged: (value) {
-              if (value != null) {
-                setState(() {
-                  _count = value;
-                  _newGame();
-                });
-              }
-            },
-            items: [6, 8, 10, 12].map((n) {
-              return DropdownMenuItem(
-                value: n,
-                child: Text('$n عدد', style: const TextStyle(color: Colors.black)),
-              );
-            }).toList(),
-          ),
-          IconButton(
-            onPressed: _newGame,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+      appBar: AppBar(title: const Text('بازی حافظه')),
+      body: const Center(child: Text('حافظه - در حال توسعه')),
+    );
+  }
+}
+
+class StroopGame extends StatelessWidget {
+  const StroopGame({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('تست استروپ')),
+      body: const Center(child: Text('استروپ - در حال توسعه')),
+    );
+  }
+}
+
+class NBackGame extends StatelessWidget {
+  const NBackGame({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('بازی N-Back')),
+      body: const Center(child: Text('N-Back - در حال توسعه')),
+    );
+  }
+}
+
+class NumberSequenceGame extends StatelessWidget {
+  const NumberSequenceGame({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('ترتیب اعداد')),
+      body: const Center(child: Text('ترتیب اعداد - در حال توسعه')),
+    );
+  }
+}
+
+// ========================= بخش ۴: برنامه اصلی =========================
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final storage = StorageService();
+  await storage.init();
+  runApp(MyApp(storage: storage));
+}
+
+class MyApp extends StatelessWidget {
+  final StorageService storage;
+  const MyApp({super.key, required this.storage});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'شناخت‌یار',
+      theme: ThemeData(
+        useMaterial3: true,
+        fontFamily: 'Far_Homa',
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4A6CF7)),
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'اعداد را به ترتیب صحیح لمس کنید:',
-              style: TextStyle(fontSize: 20),
-            ),
-            const SizedBox(height: 32),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: _sequence.map((num) {
-                final index = _sequence.indexOf(num);
-                final isDone = index < _currentIndex;
-                return GestureDetector(
-                  onTap: isDone ? null : () => _checkNumber(num),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: isDone ? Colors.green : Colors.blue,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$num',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 40),
-            Text('پیشرفت: $_currentIndex از ${_sequence.length}'),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: _currentIndex / _sequence.length,
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation(Colors.blue),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back),
-              label: const Text('بازگشت'),
-            ),
-          ],
-        ),
+      home: MultiBlocProvider(
+        providers: [
+          BlocProvider(create: (_) => ReactionCubit(storage)),
+        ],
+        child: const HomePage(),
       ),
     );
   }
