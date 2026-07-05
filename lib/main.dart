@@ -14,18 +14,40 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'بازی‌های شناختی',
+      title: 'بازی‌های شناختی حرفه‌ای',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
-        fontFamily: 'Vazir', // در صورت وجود فونت فارسی
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF4A6CF7),
+          brightness: Brightness.light,
+        ),
+        fontFamily: 'Vazir',
+        appBarTheme: const AppBarTheme(
+          elevation: 0,
+          centerTitle: true,
+        ),
+        cardTheme: CardTheme(
+          elevation: 6,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(120, 48),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            elevation: 2,
+          ),
+        ),
       ),
       home: const HomePage(),
     );
   }
 }
 
-// ========================= صفحه اصلی =========================
+// ===================== صفحه اصلی با طراحی کارت‌های زیبا =====================
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -33,8 +55,9 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('بازی‌های شناختی'),
-        centerTitle: true,
+        title: const Text('🧠 تمرین‌های شناختی'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        foregroundColor: Colors.white,
       ),
       body: SafeArea(
         child: Padding(
@@ -43,40 +66,41 @@ class HomePage extends StatelessWidget {
             crossAxisCount: 2,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
+            childAspectRatio: 1.1,
             children: [
               _buildGameCard(
                 context,
                 title: 'حافظه',
                 icon: Icons.memory,
-                color: Colors.purple,
+                color: const Color(0xFF7C4DFF),
                 onTap: () => _navigateTo(context, const MemoryGame()),
               ),
               _buildGameCard(
                 context,
                 title: 'استروپ',
                 icon: Icons.color_lens,
-                color: Colors.orange,
+                color: const Color(0xFFFF6F00),
                 onTap: () => _navigateTo(context, const StroopGame()),
               ),
               _buildGameCard(
                 context,
                 title: 'N-Back',
                 icon: Icons.numbers,
-                color: Colors.teal,
+                color: const Color(0xFF00897B),
                 onTap: () => _navigateTo(context, const NBackGame()),
               ),
               _buildGameCard(
                 context,
                 title: 'واکنش',
                 icon: Icons.timer,
-                color: Colors.blue,
+                color: const Color(0xFF1976D2),
                 onTap: () => _navigateTo(context, const ReactionTimeGame()),
               ),
               _buildGameCard(
                 context,
                 title: 'ترتیب اعداد',
                 icon: Icons.sort,
-                color: Colors.red,
+                color: const Color(0xFFC62828),
                 onTap: () => _navigateTo(context, const NumberSequenceGame()),
               ),
             ],
@@ -92,31 +116,32 @@ class HomePage extends StatelessWidget {
       required Color color,
       required VoidCallback onTap}) {
     return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [color.withOpacity(0.8), color],
+              colors: [color.withOpacity(0.7), color],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(20),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 48, color: Colors.white),
+              Icon(icon, size: 56, color: Colors.white),
               const SizedBox(height: 12),
               Text(
                 title,
                 style: const TextStyle(
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
+                  shadows: [Shadow(blurRadius: 4, color: Colors.black26)],
                 ),
               ),
             ],
@@ -129,12 +154,17 @@ class HomePage extends StatelessWidget {
   void _navigateTo(BuildContext context, Widget page) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => page),
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => page,
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
   }
 }
 
-// ========================= بازی حافظه (Memory Match) =========================
+// ===================== بازی حافظه (پیشرفته) =====================
 class MemoryGame extends StatefulWidget {
   const MemoryGame({super.key});
 
@@ -142,48 +172,101 @@ class MemoryGame extends StatefulWidget {
   State<MemoryGame> createState() => _MemoryGameState();
 }
 
-class _MemoryGameState extends State<MemoryGame> {
-  final List<String> _emojis = ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇'];
+class _MemoryGameState extends State<MemoryGame> with TickerProviderStateMixin {
+  // سطوح دشواری
+  enum Difficulty { easy, medium, hard }
+  Difficulty _difficulty = Difficulty.easy;
+
   late List<String> _cards;
-  List<int> _opened = [];
-  List<int> _matched = [];
+  final List<int> _opened = [];
+  final List<int> _matched = [];
   int _attempts = 0;
+  int _pairsFound = 0;
+  late AnimationController _flipController;
+  bool _isProcessing = false;
+
+  // پیکربندی کارت‌ها بر اساس دشواری
+  List<String> get _emojis {
+    switch (_difficulty) {
+      case Difficulty.easy:
+        return ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇']; // 3 جفت
+      case Difficulty.medium:
+        return ['🍎', '🍎', '🍌', '🍌', '🍇', '🍇', '🍒', '🍒', '🍊', '🍊']; // 5 جفت
+      case Difficulty.hard:
+        return [
+          '🍎', '🍎', '🍌', '🍌', '🍇', '🍇',
+          '🍒', '🍒', '🍊', '🍊', '🍉', '🍉', '🍓', '🍓'
+        ]; // 7 جفت
+    }
+  }
+
+  int get _gridColumns {
+    switch (_difficulty) {
+      case Difficulty.easy:
+        return 3;
+      case Difficulty.medium:
+        return 4;
+      case Difficulty.hard:
+        return 4;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _shuffle();
+    _flipController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _initGame();
   }
 
-  void _shuffle() {
-    _cards = List.from(_emojis)..shuffle();
+  @override
+  void dispose() {
+    _flipController.dispose();
+    super.dispose();
+  }
+
+  void _initGame() {
+    final list = _emojis;
+    _cards = List.from(list)..shuffle();
     _opened.clear();
     _matched.clear();
     _attempts = 0;
+    _pairsFound = 0;
+    _isProcessing = false;
   }
 
   void _onCardTap(int index) {
+    if (_isProcessing) return;
     if (_opened.length == 2 || _opened.contains(index) || _matched.contains(index)) return;
 
     setState(() {
       _opened.add(index);
+      _flipController.forward(from: 0);
     });
 
     if (_opened.length == 2) {
+      _isProcessing = true;
       _attempts++;
       if (_cards[_opened[0]] == _cards[_opened[1]]) {
         setState(() {
           _matched.addAll(_opened);
+          _pairsFound++;
           _opened.clear();
+          _isProcessing = false;
         });
-        if (_matched.length == _cards.length) {
+        HapticFeedback.lightImpact();
+        if (_pairsFound == _cards.length ~/ 2) {
           _showWinDialog();
         }
       } else {
-        Future.delayed(const Duration(seconds: 1), () {
+        Future.delayed(const Duration(milliseconds: 700), () {
           setState(() {
             _opened.clear();
+            _isProcessing = false;
           });
+          HapticFeedback.heavyImpact();
         });
       }
     }
@@ -194,17 +277,24 @@ class _MemoryGameState extends State<MemoryGame> {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text('🎉 برنده شدید!'),
-        content: Text('تعداد تلاش: $_attempts'),
+        title: const Text('🎉 تبریک!'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('همه جفت‌ها را پیدا کردید!'),
+            const SizedBox(height: 8),
+            Text('تعداد تلاش: $_attempts'),
+            const SizedBox(height: 8),
+            Text('سطح: ${_difficulty.name}'),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              setState(() {
-                _shuffle();
-              });
+              setState(() => _initGame());
             },
-            child: const Text('بازی دوباره'),
+            child: const Text('دوباره'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -222,51 +312,94 @@ class _MemoryGameState extends State<MemoryGame> {
         title: const Text('بازی حافظه'),
         centerTitle: true,
         actions: [
+          DropdownButton<Difficulty>(
+            value: _difficulty,
+            dropdownColor: Colors.white,
+            icon: const Icon(Icons.settings, color: Colors.white),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _difficulty = value;
+                  _initGame();
+                });
+              }
+            },
+            items: Difficulty.values.map((d) {
+              return DropdownMenuItem(
+                value: d,
+                child: Text(d.name, style: const TextStyle(color: Colors.black)),
+              );
+            }).toList(),
+          ),
           IconButton(
-            onPressed: () => setState(() => _shuffle()),
+            onPressed: () => setState(() => _initGame()),
             icon: const Icon(Icons.shuffle),
           ),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: GridView.builder(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            childAspectRatio: 1,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-          ),
-          itemCount: _cards.length,
-          itemBuilder: (ctx, i) {
-            final isOpen = _opened.contains(i) || _matched.contains(i);
-            return GestureDetector(
-              onTap: () => _onCardTap(i),
-              child: Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isOpen ? Colors.white : Colors.blue.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Center(
-                    child: Text(
-                      isOpen ? _cards[i] : '?',
-                      style: const TextStyle(fontSize: 32),
-                    ),
-                  ),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('تلاش: $_attempts', style: const TextStyle(fontSize: 18)),
+                Text('جفت‌ها: $_pairsFound/${_cards.length ~/ 2}',
+                    style: const TextStyle(fontSize: 18)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: GridView.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: _gridColumns,
+                  childAspectRatio: 1,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
                 ),
+                itemCount: _cards.length,
+                itemBuilder: (ctx, i) {
+                  final isOpen = _opened.contains(i) || _matched.contains(i);
+                  return GestureDetector(
+                    onTap: () => _onCardTap(i),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
+                      decoration: BoxDecoration(
+                        color: isOpen ? Colors.white : Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: Text(
+                            isOpen ? _cards[i] : '?',
+                            key: ValueKey(isOpen),
+                            style: const TextStyle(fontSize: 36),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            );
-          },
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// ========================= بازی استروپ (Stroop Test) =========================
+// ===================== بازی استروپ (پیشرفته) =====================
 class StroopGame extends StatefulWidget {
   const StroopGame({super.key});
 
@@ -275,7 +408,7 @@ class StroopGame extends StatefulWidget {
 }
 
 class _StroopGameState extends State<StroopGame> {
-  final List<String> _colors = ['قرمز', 'آبی', 'سبز', 'زرد', 'بنفش'];
+  final List<String> _colorNames = ['قرمز', 'آبی', 'سبز', 'زرد', 'بنفش'];
   final List<Color> _colorValues = [
     Colors.red,
     Colors.blue,
@@ -287,6 +420,9 @@ class _StroopGameState extends State<StroopGame> {
   late Color _textColor;
   int _score = 0;
   int _total = 0;
+  int _rounds = 10;
+  bool _isAnswered = false;
+  final List<bool> _history = [];
 
   @override
   void initState() {
@@ -295,26 +431,34 @@ class _StroopGameState extends State<StroopGame> {
   }
 
   void _nextRound() {
+    if (_total >= _rounds) {
+      _showResult();
+      return;
+    }
     final rng = Random();
-    final wordIndex = rng.nextInt(_colors.length);
+    final wordIndex = rng.nextInt(_colorNames.length);
     final colorIndex = rng.nextInt(_colorValues.length);
     setState(() {
-      _word = _colors[wordIndex];
+      _word = _colorNames[wordIndex];
       _textColor = _colorValues[colorIndex];
+      _isAnswered = false;
     });
   }
 
   void _answer(bool isCongruent) {
+    if (_isAnswered) return;
+    _isAnswered = true;
     final correct = _word == _getColorName(_textColor);
-    if ((correct && isCongruent) || (!correct && !isCongruent)) {
+    final userCorrect = (correct && isCongruent) || (!correct && !isCongruent);
+    if (userCorrect) {
       setState(() => _score++);
-    }
-    setState(() => _total++);
-    if (_total >= 10) {
-      _showResult();
+      HapticFeedback.lightImpact();
     } else {
-      _nextRound();
+      HapticFeedback.heavyImpact();
     }
+    _history.add(userCorrect);
+    setState(() => _total++);
+    Future.delayed(const Duration(milliseconds: 500), _nextRound);
   }
 
   String _getColorName(Color c) {
@@ -332,7 +476,14 @@ class _StroopGameState extends State<StroopGame> {
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         title: const Text('نتیجه استروپ'),
-        content: Text('امتیاز شما: $_score از ۱۰'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('امتیاز: $_score از $_rounds'),
+            const SizedBox(height: 8),
+            Text('دقت: ${(_score / _rounds * 100).toStringAsFixed(0)}%'),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -340,6 +491,7 @@ class _StroopGameState extends State<StroopGame> {
               setState(() {
                 _score = 0;
                 _total = 0;
+                _history.clear();
                 _nextRound();
               });
             },
@@ -360,41 +512,72 @@ class _StroopGameState extends State<StroopGame> {
       appBar: AppBar(
         title: const Text('تست استروپ'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _score = 0;
+                _total = 0;
+                _history.clear();
+                _nextRound();
+              });
+            },
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              _word,
-              style: TextStyle(
-                fontSize: 64,
-                fontWeight: FontWeight.bold,
-                color: _textColor,
+            if (_total < _rounds) ...[
+              Text(
+                _word,
+                style: TextStyle(
+                  fontSize: 64,
+                  fontWeight: FontWeight.bold,
+                  color: _textColor,
+                  shadows: [const Shadow(blurRadius: 4, color: Colors.black26)],
+                ),
               ),
-            ),
-            const SizedBox(height: 40),
-            Text(
-              'رنگ کلمه چیست؟ (نه معنی آن!)',
-              style: const TextStyle(fontSize: 18),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton(
-                  onPressed: () => _answer(true),
-                  child: const Text('همخوان'),
-                ),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: () => _answer(false),
-                  child: const Text('ناهمخوان'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            Text('پیشرفت: $_total / ۱۰'),
+              const SizedBox(height: 40),
+              const Text(
+                'رنگ کلمه چیست؟ (نه معنی آن!)',
+                style: TextStyle(fontSize: 18),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: () => _answer(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('همخوان'),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: () => _answer(false),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('ناهمخوان'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              Text('پیشرفت: $_total / $_rounds'),
+              const SizedBox(height: 8),
+              LinearProgressIndicator(
+                value: _total / _rounds,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: const AlwaysStoppedAnimation(Colors.blue),
+              ),
+            ] else
+              const CircularProgressIndicator(),
           ],
         ),
       ),
@@ -402,7 +585,7 @@ class _StroopGameState extends State<StroopGame> {
   }
 }
 
-// ========================= بازی N-Back =========================
+// ===================== بازی N-Back (پیشرفته) =====================
 class NBackGame extends StatefulWidget {
   const NBackGame({super.key});
 
@@ -411,12 +594,16 @@ class NBackGame extends StatefulWidget {
 }
 
 class _NBackGameState extends State<NBackGame> {
-  final int _n = 2; // 2-back
+  int _n = 2;
   List<int> _sequence = [];
   int _currentIndex = 0;
   int _score = 0;
   int _total = 0;
   bool _gameOver = false;
+  int _correct = 0;
+  int _incorrect = 0;
+
+  final List<int> _sequenceLengths = [15, 20, 25];
 
   @override
   void initState() {
@@ -425,12 +612,15 @@ class _NBackGameState extends State<NBackGame> {
   }
 
   void _startGame() {
+    final length = _sequenceLengths[_n - 1];
     setState(() {
-      _sequence = List.generate(20, (_) => Random().nextInt(9) + 1);
+      _sequence = List.generate(length, (_) => Random().nextInt(9) + 1);
       _currentIndex = 0;
       _score = 0;
       _total = 0;
       _gameOver = false;
+      _correct = 0;
+      _incorrect = 0;
     });
   }
 
@@ -446,14 +636,21 @@ class _NBackGameState extends State<NBackGame> {
   }
 
   void _checkMatch(bool isMatch) {
-    if (_currentIndex <= _n) {
-      // نمی‌توانیم در ابتدا قضاوت کنیم
+    if (_currentIndex < _n) {
       _nextNumber();
       return;
     }
     final actualMatch = _sequence[_currentIndex] == _sequence[_currentIndex - _n];
-    if (isMatch == actualMatch) {
-      setState(() => _score++);
+    final userCorrect = (isMatch == actualMatch);
+    if (userCorrect) {
+      setState(() {
+        _score++;
+        _correct++;
+      });
+      HapticFeedback.lightImpact();
+    } else {
+      setState(() => _incorrect++);
+      HapticFeedback.heavyImpact();
     }
     setState(() => _total++);
     _nextNumber();
@@ -465,7 +662,16 @@ class _NBackGameState extends State<NBackGame> {
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         title: const Text('نتیجه N-Back'),
-        content: Text('امتیاز شما: $_score از $_total'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('امتیاز: $_score از $_total'),
+            const SizedBox(height: 8),
+            Text('درست: $_correct | غلط: $_incorrect'),
+            const SizedBox(height: 8),
+            Text('دقت: ${_total > 0 ? (_score / _total * 100).toStringAsFixed(0) : 0}%'),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -489,42 +695,85 @@ class _NBackGameState extends State<NBackGame> {
       appBar: AppBar(
         title: const Text('بازی N-Back'),
         centerTitle: true,
+        actions: [
+          DropdownButton<int>(
+            value: _n,
+            dropdownColor: Colors.white,
+            icon: const Icon(Icons.settings, color: Colors.white),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _n = value;
+                  _startGame();
+                });
+              }
+            },
+            items: [1, 2, 3].map((n) {
+              return DropdownMenuItem(
+                value: n,
+                child: Text('${n}-Back', style: const TextStyle(color: Colors.black)),
+              );
+            }).toList(),
+          ),
+          IconButton(
+            onPressed: _startGame,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (!_gameOver && _currentIndex < _sequence.length)
-              Text(
-                '${_sequence[_currentIndex]}',
-                style: const TextStyle(fontSize: 72, fontWeight: FontWeight.bold),
-              ),
-            const SizedBox(height: 40),
-            if (!_gameOver && _currentIndex < _sequence.length)
-              Column(
-                children: [
-                  Text('آیا این عدد با عدد $_n مرحله قبل یکسان است؟'),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      ElevatedButton(
-                        onPressed: () => _checkMatch(true),
-                        child: const Text('بله'),
-                      ),
-                      const SizedBox(width: 16),
-                      ElevatedButton(
-                        onPressed: () => _checkMatch(false),
-                        child: const Text('خیر'),
-                      ),
-                    ],
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                child: Text(
+                  '${_sequence[_currentIndex]}',
+                  key: ValueKey(_currentIndex),
+                  style: const TextStyle(
+                    fontSize: 72,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
                   ),
-                  const SizedBox(height: 16),
-                  Text('پیشرفت: ${_currentIndex + 1} / ${_sequence.length}'),
+                ),
+              )
+            else
+              const Text('پایان بازی', style: TextStyle(fontSize: 24)),
+            const SizedBox(height: 40),
+            if (!_gameOver && _currentIndex < _sequence.length) ...[
+              Text('آیا این عدد با عدد $_n مرحله قبل یکسان است؟'),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: () => _checkMatch(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('بله'),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: () => _checkMatch(false),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('خیر'),
+                  ),
                 ],
               ),
-            if (_gameOver || _currentIndex >= _sequence.length)
-              const Text('پایان بازی'),
+              const SizedBox(height: 16),
+              Text('پیشرفت: ${_currentIndex + 1} / ${_sequence.length}'),
+              LinearProgressIndicator(
+                value: (_currentIndex + 1) / _sequence.length,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: const AlwaysStoppedAnimation(Colors.blue),
+              ),
+            ],
             const SizedBox(height: 32),
             OutlinedButton(
               onPressed: () => Navigator.pop(context),
@@ -537,8 +786,8 @@ class _NBackGameState extends State<NBackGame> {
   }
 }
 
-// ========================= بازی واکنش (Reaction Time) =========================
-// enum باید در سطح بالا تعریف شود
+// ===================== بازی واکنش (کاملاً حرفه‌ای) =====================
+// تعریف enum در سطح بالا
 enum GameStatus {
   idle,
   waiting,
@@ -569,16 +818,16 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
 
   Timer? _waitTimer;
   final Stopwatch _stopwatch = Stopwatch();
-  late AnimationController _colorController;
+  late AnimationController _pulseController;
   Color _circleColor = Colors.grey.shade400;
   bool _isProcessing = false;
 
   @override
   void initState() {
     super.initState();
-    _colorController = AnimationController(
+    _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 400),
     );
     _loadBestOverall();
   }
@@ -586,7 +835,7 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
   @override
   void dispose() {
     _waitTimer?.cancel();
-    _colorController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -631,6 +880,7 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
           _circleColor = Colors.green;
           _stopwatch.reset();
           _stopwatch.start();
+          _pulseController.forward(from: 0);
         });
         HapticFeedback.lightImpact();
       }
@@ -764,7 +1014,7 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
       case GameStatus.finished:
         return _buildFinalScreen();
       default:
-        return const SizedBox.shrink(); // برای رفع خطای بازگشت
+        return const SizedBox.shrink();
     }
   }
 
@@ -773,75 +1023,110 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Text(
-          'زمان واکنش',
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+          '⏱ زمان واکنش',
+          style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         const Text(
-          'پس از سبز شدن دایره، در سریع‌ترین زمان ممکن روی آن ضربه بزنید.',
+          'پس از سبز شدن دایره، در سریع‌ترین زمان ممکن ضربه بزنید.',
           textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
         if (_bestOverall != null)
-          Text(
-            'بهترین رکورد شما: $_bestOverall ms',
-            style: const TextStyle(fontSize: 16, color: Colors.green),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green.shade200),
+            ),
+            child: Text(
+              '🏆 بهترین رکورد شما: $_bestOverall ms',
+              style: const TextStyle(fontSize: 18, color: Colors.green),
+            ),
           ),
         const SizedBox(height: 40),
-        ElevatedButton(
+        ElevatedButton.icon(
           onPressed: _startGame,
-          style: ElevatedButton.styleFrom(minimumSize: const Size(200, 50)),
-          child: const Text('شروع', style: TextStyle(fontSize: 20)),
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('شروع', style: TextStyle(fontSize: 20)),
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(200, 56),
+          ),
         ),
         const SizedBox(height: 16),
-        OutlinedButton(onPressed: _goBack, child: const Text('بازگشت')),
+        OutlinedButton.icon(
+          onPressed: _goBack,
+          icon: const Icon(Icons.arrow_back),
+          label: const Text('بازگشت'),
+        ),
       ],
     );
   }
 
   Widget _buildGameScreen() {
     String statusText;
+    Color statusColor;
     if (_status == GameStatus.waiting) {
-      statusText = 'منتظر بمانید...';
+      statusText = '⏳ منتظر بمانید...';
+      statusColor = Colors.grey;
     } else if (_status == GameStatus.ready) {
       statusText = '⚡ سریع لمس کن!';
+      statusColor = Colors.green;
     } else if (_status == GameStatus.early) {
       statusText = '❌ خیلی زود! دوباره تلاش کنید.';
+      statusColor = Colors.red;
     } else {
       statusText = '';
+      statusColor = Colors.grey;
     }
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text('تلاش ${_attemptCount + 1} از $_maxAttempts'),
-        const SizedBox(height: 40),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          width: 160,
-          height: 160,
-          decoration: BoxDecoration(
-            color: _circleColor,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: _circleColor.withOpacity(0.5),
-                blurRadius: 20,
-                spreadRadius: 5,
-              ),
-            ],
-          ),
-          child: GestureDetector(
-            onTap: _handleTap,
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              decoration: const BoxDecoration(shape: BoxShape.circle),
-            ),
-          ),
+        Text(
+          'تلاش ${_attemptCount + 1} از $_maxAttempts',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 40),
-        Text(statusText, style: const TextStyle(fontSize: 20)),
+        AnimatedBuilder(
+          animation: _pulseController,
+          builder: (_, child) {
+            final scale = 1 + 0.05 * _pulseController.value;
+            return Transform.scale(
+              scale: _status == GameStatus.ready ? scale : 1.0,
+              child: Container(
+                width: 160,
+                height: 160,
+                decoration: BoxDecoration(
+                  color: _circleColor,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: _circleColor.withOpacity(0.5),
+                      blurRadius: 30,
+                      spreadRadius: 10,
+                    ),
+                  ],
+                ),
+                child: GestureDetector(
+                  onTap: _handleTap,
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: double.infinity,
+                    height: double.infinity,
+                    decoration: const BoxDecoration(shape: BoxShape.circle),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 40),
+        Text(
+          statusText,
+          style: TextStyle(fontSize: 20, color: statusColor),
+        ),
       ],
     );
   }
@@ -850,24 +1135,39 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          '$_lastReactionTime ms',
-          style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.blue),
+        TweenAnimationBuilder(
+          tween: Tween<double>(begin: 0, end: _lastReactionTime.toDouble()),
+          duration: const Duration(milliseconds: 500),
+          builder: (_, value, __) {
+            return Text(
+              '${value.toInt()} ms',
+              style: const TextStyle(
+                fontSize: 52,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue,
+              ),
+            );
+          },
         ),
         const SizedBox(height: 8),
         Text(_ratingStars, style: const TextStyle(fontSize: 32)),
         const SizedBox(height: 4),
-        Text(_ratingMessage, style: const TextStyle(fontSize: 18)),
+        Text(_ratingMessage, style: const TextStyle(fontSize: 20)),
         const SizedBox(height: 24),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: _nextAttempt,
-              child: Text(_attemptCount + 1 >= _maxAttempts ? 'پایان' : 'تلاش بعدی'),
+              icon: Icon(_attemptCount + 1 >= _maxAttempts ? Icons.flag : Icons.arrow_forward),
+              label: Text(_attemptCount + 1 >= _maxAttempts ? 'پایان' : 'تلاش بعدی'),
             ),
             const SizedBox(width: 16),
-            OutlinedButton(onPressed: _resetGame, child: const Text('شروع مجدد')),
+            OutlinedButton.icon(
+              onPressed: _resetGame,
+              icon: const Icon(Icons.refresh),
+              label: const Text('شروع مجدد'),
+            ),
           ],
         ),
         const SizedBox(height: 16),
@@ -881,20 +1181,42 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text('🏁 جلسه کامل شد!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        const Text('🏁 جلسه کامل شد!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
         const SizedBox(height: 24),
-        _buildStatRow('میانگین زمان', '${avg.toStringAsFixed(0)} ms'),
-        _buildStatRow('بهترین زمان این جلسه', '$_bestSession ms'),
-        if (_bestOverall != null) _buildStatRow('بهترین رکورد کلی', '$_bestOverall ms'),
+        Card(
+          elevation: 4,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                _buildStatRow('میانگین زمان', '${avg.toStringAsFixed(0)} ms'),
+                _buildStatRow('بهترین زمان این جلسه', '$_bestSession ms'),
+                if (_bestOverall != null) _buildStatRow('بهترین رکورد کلی', '$_bestOverall ms'),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 32),
-        Text(_getOverallRating(avg), style: const TextStyle(fontSize: 18)),
+        Text(
+          _getOverallRating(avg),
+          style: const TextStyle(fontSize: 18),
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 32),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ElevatedButton(onPressed: _resetGame, child: const Text('دوباره بازی')),
+            ElevatedButton.icon(
+              onPressed: _resetGame,
+              icon: const Icon(Icons.replay),
+              label: const Text('دوباره بازی'),
+            ),
             const SizedBox(width: 16),
-            OutlinedButton(onPressed: _goBack, child: const Text('بازگشت')),
+            OutlinedButton.icon(
+              onPressed: _goBack,
+              icon: const Icon(Icons.home),
+              label: const Text('خانه'),
+            ),
           ],
         ),
       ],
@@ -905,10 +1227,17 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('$label: ', style: const TextStyle(fontSize: 18)),
-          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
+          Text(label, style: const TextStyle(fontSize: 18)),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.blue,
+            ),
+          ),
         ],
       ),
     );
@@ -922,7 +1251,7 @@ class _ReactionTimeGameState extends State<ReactionTimeGame>
   }
 }
 
-// ========================= بازی ترتیب اعداد (Number Sequence) =========================
+// ===================== بازی ترتیب اعداد (پیشرفته) =====================
 class NumberSequenceGame extends StatefulWidget {
   const NumberSequenceGame({super.key});
 
@@ -935,6 +1264,8 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
   int _currentIndex = 0;
   int _score = 0;
   bool _gameOver = false;
+  int _mistakes = 0;
+  int _count = 8;
 
   @override
   void initState() {
@@ -943,11 +1274,12 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
   }
 
   void _newGame() {
-    _sequence = List.generate(8, (_) => Random().nextInt(100) + 1);
+    _sequence = List.generate(_count, (_) => Random().nextInt(100) + 1);
     _sequence.shuffle();
     _currentIndex = 0;
     _score = 0;
     _gameOver = false;
+    _mistakes = 0;
   }
 
   void _checkNumber(int number) {
@@ -956,6 +1288,7 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
       setState(() {
         _score++;
         _currentIndex++;
+        HapticFeedback.lightImpact();
         if (_currentIndex == _sequence.length) {
           _gameOver = true;
           _showResult();
@@ -964,6 +1297,8 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
     } else {
       setState(() {
         _gameOver = true;
+        _mistakes++;
+        HapticFeedback.heavyImpact();
         _showResult();
       });
     }
@@ -975,7 +1310,14 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         title: const Text('نتیجه ترتیب اعداد'),
-        content: Text('امتیاز شما: $_score از ${_sequence.length}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('امتیاز: $_score از ${_sequence.length}'),
+            const SizedBox(height: 8),
+            Text('تعداد اشتباه: $_mistakes'),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -999,6 +1341,31 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
       appBar: AppBar(
         title: const Text('ترتیب اعداد'),
         centerTitle: true,
+        actions: [
+          DropdownButton<int>(
+            value: _count,
+            dropdownColor: Colors.white,
+            icon: const Icon(Icons.settings, color: Colors.white),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  _count = value;
+                  _newGame();
+                });
+              }
+            },
+            items: [6, 8, 10, 12].map((n) {
+              return DropdownMenuItem(
+                value: n,
+                child: Text('$n عدد', style: const TextStyle(color: Colors.black)),
+              );
+            }).toList(),
+          ),
+          IconButton(
+            onPressed: _newGame,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: Center(
         child: Column(
@@ -1017,12 +1384,20 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
                 final isDone = index < _currentIndex;
                 return GestureDetector(
                   onTap: isDone ? null : () => _checkNumber(num),
-                  child: Container(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
                     width: 60,
                     height: 60,
                     decoration: BoxDecoration(
-                      color: isDone ? Colors.grey : Colors.blue,
+                      color: isDone ? Colors.green : Colors.blue,
                       shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 4,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
                     child: Center(
                       child: Text(
@@ -1040,10 +1415,17 @@ class _NumberSequenceGameState extends State<NumberSequenceGame> {
             ),
             const SizedBox(height: 40),
             Text('پیشرفت: $_currentIndex از ${_sequence.length}'),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: _currentIndex / _sequence.length,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: const AlwaysStoppedAnimation(Colors.blue),
+            ),
             const SizedBox(height: 16),
-            OutlinedButton(
+            OutlinedButton.icon(
               onPressed: () => Navigator.pop(context),
-              child: const Text('بازگشت'),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('بازگشت'),
             ),
           ],
         ),
