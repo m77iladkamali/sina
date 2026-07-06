@@ -9,13 +9,28 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-   camera: ^0.11.0
-  google_mlkit_face_detection: ^0.13.0
-  flutter_bloc: ^8.1.6
-  equatable: ^2.0.7
+
+  # دوربین
+  camera: ^0.11.0
+
+  # تشخیص چهره با TFLite (نسخه جدید با ۴۶۸ نقطه)
+  face_detection_tflite: ^5.0.6
+
+  # پردازش سیگنال (FFT, فیلتر)
+  open_dspc: ^0.0.3
+
+  # تبدیل YUV به RGB با سرعت بالا (C++ FFI)
+  yuv_ffi: ^0.1.1
+
+  # نمودار لحظه‌ای
   fl_chart: ^0.70.2
-  permission_handler: ^11.3.1
-  flutter_svg: ^2.0.10+1 # برای آیکون‌های زیبا
+
+  # مجوزها
+  permission_handler: ^12.0.2
+
+  # مدیریت وضعیت
+  flutter_bloc: ^8.1.6
+  equatable: ^2.0.7برای آیکون‌های زیبا
 
 dev_dependencies:
   flutter_test:
