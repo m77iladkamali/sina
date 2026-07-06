@@ -1,747 +1,732 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:typed_data';
+
+import 'package:camera/camera.dart';
 import 'package:equatable/equatable.dart';
+import 'package:face_detection_tflite/face_detection_tflite.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:intl/intl.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:open_dspc/open_dspc.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:yuv_ffi/yuv_ffi.dart';
 
-// ========================= بخش ۱: مدل‌ها و سرویس‌های داده =========================
+// ==============================
+// ۱. تعریف Stateها
+// ==============================
+abstract class RppgState extends Equatable {
+  const RppgState();
+  @override
+  List<Object?> get props => [];
+}
 
-/// مدل داده برای هر تلاش واکنش
-class ReactionAttempt extends Equatable {
-  final int timestamp;
-  final int reactionTimeMs;
-  final bool isEarly;
+class RppgInitial extends RppgState {}
 
-  const ReactionAttempt({
-    required this.timestamp,
-    required this.reactionTimeMs,
-    this.isEarly = false,
+class RppgLoading extends RppgState {}
+
+class RppgMonitoring extends RppgState {
+  final int bpm;
+  final List<double> signalData;
+  final String quality;
+  final List<String> alerts;
+  final bool faceDetected;
+  final Rect? faceRect;
+  final Rect? foreheadRect;
+
+  const RppgMonitoring({
+    required this.bpm,
+    required this.signalData,
+    required this.quality,
+    this.alerts = const [],
+    this.faceDetected = false,
+    this.faceRect,
+    this.foreheadRect,
   });
 
   @override
-  List<Object?> get props => [timestamp, reactionTimeMs, isEarly];
+  List<Object?> get props =>
+      [bpm, signalData, quality, alerts, faceDetected, faceRect, foreheadRect];
 }
 
-/// سرویس ذخیره‌سازی با استفاده از SharedPreferences (برای نمونه)
-class StorageService {
-  static final StorageService _instance = StorageService._internal();
-  factory StorageService() => _instance;
-  StorageService._internal();
+// ==============================
+// ۲. Cubit (منطق اصلی)
+// ==============================
+class RppgCubit extends Cubit<RppgState> {
+  CameraController? _cameraController;
+  StreamSubscription<CameraImage>? _imageSubscription;
+  FaceDetector? _faceDetector;
+  bool _isProcessing = false;
 
-  late SharedPreferences _prefs;
+  // ========== بافرهای سیگنال ==========
+  static const int bufferSize = 300; // ۳۰۰ فریم ≈ ۱۰ ثانیه با ۳۰ فریم
+  final List<double> _signalBuffer = List.filled(bufferSize, 0.0);
+  int _bufferIndex = 0;
+  bool _bufferFull = false;
 
-  Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
-  }
+  // ========== پارامترهای rPPG ==========
+  static const double minBPM = 45;
+  static const double maxBPM = 200;
+  static const double sampleRate = 30.0; // فریم بر ثانیه
 
-  Future<void> saveBestReactionTime(int time) async {
-    await _prefs.setInt('reaction_best', time);
-  }
+  // ========== آمار کیفیت ==========
+  double _snr = 0.0;
+  int _motionCounter = 0;
+  double _avgBrightness = 0.0;
 
-  int? getBestReactionTime() {
-    return _prefs.getInt('reaction_best');
-  }
+  RppgCubit() : super(RppgInitial());
 
-  // برای تاریخچه می‌توان از sqflite استفاده کرد
-}
+  // ==============================================
+  // شروع اندازه‌گیری
+  // ==============================================
+  Future<void> startMonitoring() async {
+    try {
+      emit(RppgLoading());
 
-// ========================= بخش ۲: منطق بازی (Cubit) =========================
-
-/// وضعیت‌های بازی واکنش
-enum ReactionStatus {
-  idle,
-  waiting,
-  ready,
-  early,
-  showingResult,
-  finished,
-}
-
-/// رویدادهای بازی واکنش
-sealed class ReactionEvent {}
-
-class ReactionStarted extends ReactionEvent {}
-
-class ReactionTapped extends ReactionEvent {}
-
-class ReactionNextAttempt extends ReactionEvent {}
-
-class ReactionReset extends ReactionEvent {}
-
-class ReactionGoBack extends ReactionEvent {}
-
-/// وضعیت Cubit
-class ReactionState extends Equatable {
-  final ReactionStatus status;
-  final int attemptCount;
-  final int maxAttempts;
-  final List<int> times;
-  final int? bestOverall;
-  final int bestSession;
-  final int lastTime;
-  final String ratingMessage;
-  final String ratingStars;
-  final bool isProcessing;
-
-  const ReactionState({
-    this.status = ReactionStatus.idle,
-    this.attemptCount = 0,
-    this.maxAttempts = 5,
-    this.times = const [],
-    this.bestOverall,
-    this.bestSession = 0,
-    this.lastTime = 0,
-    this.ratingMessage = '',
-    this.ratingStars = '',
-    this.isProcessing = false,
-  });
-
-  double get average =>
-      times.isEmpty ? 0 : times.reduce((a, b) => a + b) / times.length;
-
-  ReactionState copyWith({
-    ReactionStatus? status,
-    int? attemptCount,
-    int? maxAttempts,
-    List<int>? times,
-    int? bestOverall,
-    int? bestSession,
-    int? lastTime,
-    String? ratingMessage,
-    String? ratingStars,
-    bool? isProcessing,
-  }) {
-    return ReactionState(
-      status: status ?? this.status,
-      attemptCount: attemptCount ?? this.attemptCount,
-      maxAttempts: maxAttempts ?? this.maxAttempts,
-      times: times ?? this.times,
-      bestOverall: bestOverall ?? this.bestOverall,
-      bestSession: bestSession ?? this.bestSession,
-      lastTime: lastTime ?? this.lastTime,
-      ratingMessage: ratingMessage ?? this.ratingMessage,
-      ratingStars: ratingStars ?? this.ratingStars,
-      isProcessing: isProcessing ?? this.isProcessing,
-    );
-  }
-
-  @override
-  List<Object?> get props => [
-    status,
-    attemptCount,
-    maxAttempts,
-    times,
-    bestOverall,
-    bestSession,
-    lastTime,
-    ratingMessage,
-    ratingStars,
-    isProcessing,
-  ];
-}
-
-/// Cubit مدیریت بازی واکنش
-class ReactionCubit extends Cubit<ReactionState> {
-  final StorageService storage;
-  Timer? _waitTimer;
-  final Stopwatch _stopwatch = Stopwatch();
-
-  ReactionCubit(this.storage) : super(const ReactionState()) {
-    _loadBestOverall();
-  }
-
-  Future<void> _loadBestOverall() async {
-    final best = storage.getBestReactionTime();
-    if (best != null) {
-      emit(state.copyWith(bestOverall: best));
-    }
-  }
-
-  void startGame() {
-    emit(state.copyWith(
-      status: ReactionStatus.waiting,
-      attemptCount: 0,
-      times: [],
-      bestSession: 0,
-      isProcessing: false,
-    ));
-    _startTrial();
-  }
-
-  void _startTrial() {
-    if (state.attemptCount >= state.maxAttempts) {
-      emit(state.copyWith(status: ReactionStatus.finished, isProcessing: true));
-      return;
-    }
-    emit(state.copyWith(
-      status: ReactionStatus.waiting,
-      isProcessing: false,
-    ));
-    final delay = Random().nextInt(3000) + 2000;
-    _waitTimer = Timer(Duration(milliseconds: delay), () {
-      if (!isClosed && state.status == ReactionStatus.waiting) {
-        emit(state.copyWith(status: ReactionStatus.ready));
-        _stopwatch.reset();
-        _stopwatch.start();
-        HapticFeedback.lightImpact();
+      // مجوز دوربین
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        emit(RppgInitial());
+        return;
       }
-    });
+
+      // راه‌اندازی دوربین جلو
+      final cameras = await availableCameras();
+      final frontCamera = cameras.firstWhere(
+        (cam) => cam.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
+
+      _cameraController = CameraController(
+        frontCamera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
+      await _cameraController!.initialize();
+      await _cameraController!.setFocusMode(FocusMode.locked);
+      await _cameraController!.setExposureMode(ExposureMode.locked);
+
+      // مقداردهی اولیه تشخیص چهره (مدل دوربین جلو)
+      _faceDetector = FaceDetector();
+      await _faceDetector!.initialize(model: FaceDetectionModel.frontCamera);
+
+      // شروع استریم دوربین
+      _imageSubscription = _cameraController!.startImageStream((image) {
+        _processFrame(image);
+      });
+
+      emit(const RppgMonitoring(
+        bpm: 0,
+        signalData: [],
+        quality: '--',
+        alerts: [],
+        faceDetected: false,
+      ));
+    } catch (e) {
+      debugPrint('Error: $e');
+      emit(RppgInitial());
+    }
   }
 
-  void handleTap() {
-    if (state.isProcessing) return;
-    switch (state.status) {
-      case ReactionStatus.waiting:
-        _waitTimer?.cancel();
-        emit(state.copyWith(
-          status: ReactionStatus.early,
-          isProcessing: true,
-        ));
-        Future.delayed(const Duration(seconds: 1), () {
-          if (!isClosed) {
-            emit(state.copyWith(isProcessing: false));
-            _startTrial();
-          }
-        });
-        break;
-      case ReactionStatus.ready:
-        _stopwatch.stop();
-        final time = _stopwatch.elapsedMilliseconds;
-        final newTimes = [...state.times, time];
-        final newBestSession = state.bestSession == 0 || time < state.bestSession
-            ? time
-            : state.bestSession;
-        final newBestOverall = state.bestOverall == null || time < state.bestOverall!
-            ? time
-            : state.bestOverall;
-        if (newBestOverall != state.bestOverall) {
-          storage.saveBestReactionTime(newBestOverall!);
+  // ==============================================
+  // پردازش هر فریم (در ترد اصلی - اما سریع)
+  // ==============================================
+  Future<void> _processFrame(CameraImage image) async {
+    if (_isProcessing || _faceDetector == null) return;
+    _isProcessing = true;
+
+    try {
+      // ۱. تبدیل YUV به RGB با yuv_ffi (C++ FFI - بسیار سریع)
+      final rgbData = _convertYUVtoRGB(image);
+      if (rgbData == null) return;
+
+      // ۲. تشخیص چهره و استخراج ناحیه پیشانی
+      final result = await _faceDetector!.runAll(rgbData);
+      final detections = result.detections;
+
+      if (detections.isEmpty) {
+        // چهره‌ای تشخیص داده نشد
+        if (state is RppgMonitoring) {
+          final current = state as RppgMonitoring;
+          emit(current.copyWith(
+            faceDetected: false,
+            alerts: ['😔 چهره‌ای تشخیص داده نشد'],
+          ));
         }
-        final rating = _getRating(time);
-        emit(state.copyWith(
-          status: ReactionStatus.showingResult,
-          times: newTimes,
-          bestSession: newBestSession,
-          bestOverall: newBestOverall,
-          lastTime: time,
-          ratingMessage: rating['message']!,
-          ratingStars: rating['stars']!,
-          isProcessing: true,
+        return;
+      }
+
+      // اولین چهره را انتخاب کن
+      final detection = detections.first;
+      final faceRect = detection.bbox.toRect(
+        Size(image.width.toDouble(), image.height.toDouble()),
+      );
+
+      // ۳. محاسبه ناحیه پیشانی (۲۵٪ بالای صورت)
+      final foreheadRect = Rect.fromLTRB(
+        faceRect.left + faceRect.width * 0.15,
+        faceRect.top,
+        faceRect.right - faceRect.width * 0.15,
+        faceRect.top + faceRect.height * 0.20,
+      );
+
+      // ۴. استخراج سیگنال rPPG از ناحیه پیشانی
+      final signal = _extractSignal(rgbData, image.width, image.height, foreheadRect);
+
+      // ۵. اضافه کردن به بافر و پردازش
+      _addToBuffer(signal);
+
+      // ۶. محاسبه کیفیت و هشدارها
+      _calculateQuality(detection, foreheadRect);
+
+      // ۷. اگر بافر پر شد، BPM را محاسبه کن
+      int bpm = 0;
+      List<double> chartData = [];
+      if (_bufferFull) {
+        bpm = _calculateBPM();
+        chartData = _getSignalForChart();
+      }
+
+      // ۸. به‌روزرسانی UI
+      if (state is RppgMonitoring) {
+        final current = state as RppgMonitoring;
+        emit(RppgMonitoring(
+          bpm: bpm,
+          signalData: chartData,
+          quality: _getQualityString(),
+          alerts: _getAlerts(),
+          faceDetected: true,
+          faceRect: faceRect,
+          foreheadRect: foreheadRect,
         ));
-        break;
-      default:
-        break;
+      }
+    } catch (e) {
+      debugPrint('Process error: $e');
+    } finally {
+      _isProcessing = false;
     }
   }
 
-  Map<String, String> _getRating(int time) {
-    if (time < 200) return {'stars': '⭐⭐⭐⭐⭐', 'message': 'عالی!'};
-    if (time < 250) return {'stars': '⭐⭐⭐⭐', 'message': 'بسیار خوب'};
-    if (time < 320) return {'stars': '⭐⭐⭐', 'message': 'خوب'};
-    if (time < 450) return {'stars': '⭐⭐', 'message': 'متوسط'};
-    return {'stars': '⭐', 'message': 'نیاز به تمرین'};
+  // ==============================================
+  // تبدیل YUV به RGB (با yuv_ffi - C++ FFI)
+  // ==============================================
+  Uint8List? _convertYUVtoRGB(CameraImage image) {
+    try {
+      final width = image.width;
+      final height = image.height;
+
+      // استخراج پلن‌های YUV
+      final yPlane = image.planes[0];
+      final uPlane = image.planes[1];
+      final vPlane = image.planes[2];
+
+      // ساخت YuvImage با فرمت I420
+      final yuvImage = YuvImage.i420(
+        width,
+        height,
+        yPlane.bytes,
+        uPlane.bytes,
+        vPlane.bytes,
+        yRowStride: yPlane.bytesPerRow,
+        uvRowStride: uPlane.bytesPerRow,
+        uvPixelStride: uPlane.bytesPerPixel ?? 2,
+      );
+
+      // تبدیل به RGBA8888
+      final rgba = yuvImage.toRgba8888();
+      return rgba;
+    } catch (e) {
+      debugPrint('YUV conversion error: $e');
+      return null;
+    }
   }
 
-  void nextAttempt() {
-    final newCount = state.attemptCount + 1;
-    emit(state.copyWith(
-      attemptCount: newCount,
-      isProcessing: false,
-    ));
-    if (newCount >= state.maxAttempts) {
-      emit(state.copyWith(status: ReactionStatus.finished, isProcessing: true));
+  // ==============================================
+  // استخراج سیگنال rPPG با الگوریتم POS
+  // ==============================================
+  double _extractSignal(
+    Uint8List rgbData,
+    int width,
+    int height,
+    Rect forehead,
+  ) {
+    // محدود کردن ناحیه به اندازه تصویر
+    final x1 = forehead.left.clamp(0, width - 1).toInt();
+    final y1 = forehead.top.clamp(0, height - 1).toInt();
+    final x2 = forehead.right.clamp(0, width - 1).toInt();
+    final y2 = forehead.bottom.clamp(0, height - 1).toInt();
+
+    if (x1 >= x2 || y1 >= y2) return 0.0;
+
+    double sumR = 0, sumG = 0, sumB = 0;
+    int count = 0;
+
+    // محاسبه میانگین RGB در ناحیه پیشانی
+    for (int y = y1; y < y2; y++) {
+      for (int x = x1; x < x2; x++) {
+        final index = (y * width + x) * 4;
+        sumR += rgbData[index];
+        sumG += rgbData[index + 1];
+        sumB += rgbData[index + 2];
+        count++;
+      }
+    }
+
+    if (count == 0) return 0.0;
+
+    final avgR = sumR / count;
+    final avgG = sumG / count;
+    final avgB = sumB / count;
+
+    // ==========================================
+    // الگوریتم POS (Plane-Orthogonal-to-Skin)
+    // ==========================================
+    // Paper: "Algorithmic Principles of Remote PPG" (Wang et al. 2017)
+    // https://ieeexplore.ieee.org/document/7565547
+
+    // نرمال‌سازی سیگنال‌ها (میانگین‌گیری زمان‌دار - برای سادگی از داده‌های قبلی استفاده می‌کنیم)
+    // در اینجا از یک تقریب ساده استفاده می‌کنیم:
+    // S = G - B (تفریق کانال سبز و آبی برای حذف نویز حرکت)
+
+    // POS: سیگنال خروجی = G - alpha * B
+    // alpha = std(G) / std(B) (نسبت انحراف معیار)
+    // برای سادگی از alpha = 0.5 استفاده می‌کنیم (مقدار معمول در مقالات)
+
+    const double alpha = 0.5;
+    double posSignal = avgG - alpha * avgB;
+
+    // ذخیره روشنایی برای تشخیص نور
+    _avgBrightness = (avgR + avgG + avgB) / 3;
+
+    return posSignal;
+  }
+
+  // ==============================================
+  // مدیریت بافر سیگنال
+  // ==============================================
+  void _addToBuffer(double signal) {
+    _signalBuffer[_bufferIndex] = signal;
+    _bufferIndex = (_bufferIndex + 1) % bufferSize;
+
+    if (_bufferIndex == 0) {
+      _bufferFull = true;
+    }
+  }
+
+  // ==============================================
+  // محاسبه BPM با FFT (با استفاده از open_dspc)
+  // ==============================================
+  int _calculateBPM() {
+    if (!_bufferFull) return 0;
+
+    // ۱. آماده‌سازی داده
+    final n = bufferSize;
+    final signal = Float32List(n);
+
+    // کپی کردن داده‌ها از بافر (به ترتیب)
+    for (int i = 0; i < n; i++) {
+      final idx = (_bufferIndex + i) % n;
+      signal[i] = _signalBuffer[idx].toFloat();
+    }
+
+    // ۲. حذف DC (میانگین‌گیری)
+    double mean = 0;
+    for (int i = 0; i < n; i++) mean += signal[i];
+    mean /= n;
+    for (int i = 0; i < n; i++) signal[i] -= mean;
+
+    // ۳. پنجره هانینگ (کاهش نشتی طیفی)
+    for (int i = 0; i < n; i++) {
+      final double hann = 0.5 * (1 - cos(2 * pi * i / (n - 1)));
+      signal[i] *= hann;
+    }
+
+    // ۴. اجرای FFT با open_dspc
+    final fftPlan = RfftPlan(n);
+    final freqData = fftPlan.execute(signal);
+
+    // ۵. پیدا کردن فرکانس غالب در محدوده BPM
+    double maxMagnitude = 0;
+    int maxIndex = -1;
+
+    // محدوده فرکانس: ۰.۷۵ تا ۳.۳ هرتز (۴۵ تا ۲۰۰ BPM)
+    final minFreq = minBPM / 60.0;
+    final maxFreq = maxBPM / 60.0;
+    final minBin = (minFreq * n / sampleRate).round();
+    final maxBin = (maxFreq * n / sampleRate).round();
+
+    for (int i = minBin; i < maxBin && i < freqData.length; i++) {
+      final real = freqData[i].real;
+      final imag = freqData[i].imag;
+      final mag = sqrt(real * real + imag * imag);
+
+      if (mag > maxMagnitude) {
+        maxMagnitude = mag;
+        maxIndex = i;
+      }
+    }
+
+    if (maxIndex == -1) return 0;
+
+    // ۶. محاسبه BPM از فرکانس غالب
+    final dominantFreq = (maxIndex * sampleRate) / n;
+    final bpm = (dominantFreq * 60).round();
+
+    // ۷. محاسبه SNR (نسبت سیگنال به نویز)
+    double totalPower = 0;
+    double signalPower = 0;
+    final peakBin = maxIndex;
+
+    for (int i = 0; i < freqData.length; i++) {
+      final real = freqData[i].real;
+      final imag = freqData[i].imag;
+      final mag = sqrt(real * real + imag * imag);
+      totalPower += mag * mag;
+
+      // سیگنال: پیک ± ۲ باند
+      if ((i - peakBin).abs() <= 2) {
+        signalPower += mag * mag;
+      }
+    }
+
+    _snr = 10 * log10(signalPower / max(totalPower - signalPower, 1e-10));
+
+    return bpm.clamp(0, 250);
+  }
+
+  // ==============================================
+  // گرفتن داده برای نمودار (آخرین ۱۵۰ نمونه)
+  // ==============================================
+  List<double> _getSignalForChart() {
+    const int chartSize = 150;
+    final List<double> data = [];
+
+    for (int i = 0; i < chartSize; i++) {
+      final idx = (_bufferIndex - chartSize + i) % bufferSize;
+      if (idx < 0) continue;
+      data.add(_signalBuffer[idx]);
+    }
+
+    // نرمال‌سازی برای نمایش بهتر
+    if (data.isEmpty) return [];
+    double minVal = data.reduce(min);
+    double maxVal = data.reduce(max);
+    final range = maxVal - minVal;
+
+    if (range > 0.001) {
+      for (int i = 0; i < data.length; i++) {
+        data[i] = ((data[i] - minVal) / range) * 2 - 1;
+      }
+    }
+
+    return data;
+  }
+
+  // ==============================================
+  // محاسبه کیفیت و هشدارها
+  // ==============================================
+  void _calculateQuality(FaceDetectionResult detection, Rect foreheadRect) {
+    // تشخیص حرکت: تغییر موقعیت چهره
+    // (برای سادگی، از مختصات استفاده می‌کنیم)
+    final centerX = detection.bbox.center.dx;
+    final centerY = detection.bbox.center.dy;
+
+    // حرکت زیاد سر: اگر چهره به لبه‌ها نزدیک باشد یا تغییرات ناگهانی داشته باشد
+    // در اینجا یک تقریب ساده
+    if (centerX < 0.1 || centerX > 0.9 || centerY < 0.1 || centerY > 0.9) {
+      _motionCounter++;
     } else {
-      _startTrial();
+      _motionCounter = max(0, _motionCounter - 1);
     }
   }
 
-  void reset() {
-    _waitTimer?.cancel();
-    emit(const ReactionState());
-    _loadBestOverall();
+  String _getQualityString() {
+    // کیفیت بر اساس SNR و حرکت و نور
+    if (_snr > 8 && _motionCounter < 5 && _avgBrightness > 50 && _avgBrightness < 220) {
+      return 'Good';
+    } else if (_snr > 4 && _motionCounter < 15 && _avgBrightness > 30 && _avgBrightness < 240) {
+      return 'Fair';
+    } else {
+      return 'Poor';
+    }
   }
 
-  void goBack() {
-    _waitTimer?.cancel();
-    // خروج از بازی (توسط Navigator مدیریت می‌شود)
+  List<String> _getAlerts() {
+    final List<String> alerts = [];
+
+    if (_motionCounter > 10) {
+      alerts.add('⚠️ حرکت زیاد سر');
+    }
+
+    if (_avgBrightness < 40) {
+      alerts.add('💡 نور محیط کم است');
+    } else if (_avgBrightness > 230) {
+      alerts.add('☀️ نور محیط زیاد است');
+    }
+
+    if (_snr < 2 && _bufferFull) {
+      alerts.add('📶 سیگنال ضعیف');
+    }
+
+    return alerts;
+  }
+
+  // ==============================================
+  // توقف اندازه‌گیری
+  // ==============================================
+  void stopMonitoring() {
+    _imageSubscription?.cancel();
+    _cameraController?.dispose();
+    _faceDetector?.dispose();
+    emit(RppgInitial());
   }
 
   @override
   Future<void> close() {
-    _waitTimer?.cancel();
+    stopMonitoring();
     return super.close();
   }
 }
 
-// ========================= بخش ۳: ویجت‌های رابط کاربری =========================
+// ==============================
+// ۳. ویجت‌های UI
+// ==============================
+void main() => runApp(const MyApp());
 
-/// صفحه اصلی با منوی بازی‌ها
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+        primaryColor: Colors.redAccent,
+      ),
+      home: BlocProvider(
+        create: (_) => RppgCubit(),
+        child: const HomePage(),
+      ),
+    );
+  }
+}
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('🧠 شناخت‌یار'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            onPressed: () {
-              // نمایش آمار کلی
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.brightness_6),
-            onPressed: () {
-              // تغییر تم
-            },
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: GridView.count(
-            crossAxisCount: 2,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: 1.1,
-            children: [
-              _gameCard(context, 'حافظه', Icons.memory, const Color(0xFF7C4DFF),
-                  () => _navigateTo(context, const MemoryGame())),
-              _gameCard(context, 'استروپ', Icons.color_lens, const Color(0xFFFF6F00),
-                  () => _navigateTo(context, const StroopGame())),
-              _gameCard(context, 'N-Back', Icons.numbers, const Color(0xFF00897B),
-                  () => _navigateTo(context, const NBackGame())),
-              _gameCard(context, 'واکنش', Icons.timer, const Color(0xFF1976D2),
-                  () => _navigateTo(context, BlocProvider.value(
-                        value: ReactionCubit(StorageService()),
-                        child: const ReactionGame(),
-                      ))),
-              _gameCard(context, 'ترتیب اعداد', Icons.sort, const Color(0xFFC62828),
-                  () => _navigateTo(context, const NumberSequenceGame())),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+      body: BlocConsumer<RppgCubit, RppgState>(
+        listener: (context, state) {},
+        builder: (context, state) {
+          if (state is RppgLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-  Widget _gameCard(BuildContext context, String title, IconData icon, Color color,
-      VoidCallback onTap) {
-    return Card(
-      elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [color.withOpacity(0.7), color],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          return Stack(
             children: [
-              Icon(icon, size: 56, color: Colors.white),
-              const SizedBox(height: 12),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+              // دوربین
+              if (state is RppgMonitoring)
+                _buildCameraPreview(context)
+              else
+                Container(color: Colors.black),
+
+              // لایه رویی
+              if (state is RppgMonitoring) ...[
+                // کادر صورت (سبز)
+                if (state.faceDetected && state.faceRect != null)
+                  Positioned(
+                    left: state.faceRect!.left,
+                    top: state.faceRect!.top,
+                    width: state.faceRect!.width,
+                    height: state.faceRect!.height,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.green, width: 2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                // کادر پیشانی (قرمز - ناحیه استخراج سیگنال)
+                if (state.faceDetected && state.foreheadRect != null)
+                  Positioned(
+                    left: state.foreheadRect!.left,
+                    top: state.foreheadRect!.top,
+                    width: state.foreheadRect!.width,
+                    height: state.foreheadRect!.height,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.red, width: 2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                _buildOverlay(context, state),
+              ],
+              if (state is RppgInitial)
+                Center(
+                  child: ElevatedButton.icon(
+                    onPressed: () =>
+                        context.read<RppgCubit>().startMonitoring(),
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('شروع اندازه‌گیری ضربان'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 16),
+                      textStyle: const TextStyle(fontSize: 18),
+                    ),
+                  ),
                 ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCameraPreview(BuildContext context) {
+    final cubit = context.read<RppgCubit>();
+    if (cubit._cameraController == null ||
+        !cubit._cameraController!.value.isInitialized) {
+      return const SizedBox.shrink();
+    }
+    return CameraPreview(cubit._cameraController!);
+  }
+
+  Widget _buildOverlay(BuildContext context, RppgMonitoring state) {
+    return SafeArea(
+      child: Column(
+        children: [
+          // هشدارها
+          if (state.alerts.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade900.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _navigateTo(BuildContext context, Widget page) {
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => page,
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-      ),
-    );
-  }
-}
-
-/// بازی واکنش (با استفاده از Cubit)
-class ReactionGame extends StatelessWidget {
-  const ReactionGame({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => ReactionCubit(StorageService()),
-      child: const _ReactionView(),
-    );
-  }
-}
-
-class _ReactionView extends StatelessWidget {
-  const _ReactionView();
-
-  @override
-  Widget build(BuildContext context) {
-    final cubit = context.watch<ReactionCubit>();
-    final state = cubit.state;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('زمان واکنش'),
-        centerTitle: true,
-        actions: [
-          if (state.status != ReactionStatus.idle)
-            IconButton(
-              onPressed: cubit.reset,
-              icon: const Icon(Icons.refresh),
+              child: Wrap(
+                spacing: 8,
+                children: state.alerts
+                    .map((alert) => Text(alert, style: const TextStyle(fontSize: 14)))
+                    .toList(),
+              ),
             ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Center(
-            child: _buildBody(context, state, cubit),
-          ),
-        ),
-      ),
-    );
-  }
+          const Spacer(),
 
-  Widget _buildBody(
-      BuildContext context, ReactionState state, ReactionCubit cubit) {
-    switch (state.status) {
-      case ReactionStatus.idle:
-        return _IdleScreen(state: state, onStart: cubit.startGame);
-      case ReactionStatus.waiting:
-      case ReactionStatus.ready:
-      case ReactionStatus.early:
-        return _GameScreen(state: state, onTap: cubit.handleTap);
-      case ReactionStatus.showingResult:
-        return _ResultScreen(state: state, onNext: cubit.nextAttempt, onReset: cubit.reset);
-      case ReactionStatus.finished:
-        return _FinishScreen(state: state, onReset: cubit.reset, onBack: cubit.goBack);
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-}
-
-// ویجت‌های فرعی (ساده‌سازی شده برای اختصار)
-class _IdleScreen extends StatelessWidget {
-  final ReactionState state;
-  final VoidCallback onStart;
-
-  const _IdleScreen({required this.state, required this.onStart});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Text('⏱ زمان واکنش', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
-        const Text('پس از سبز شدن دایره، در سریع‌ترین زمان ممکن ضربه بزنید.'),
-        const SizedBox(height: 24),
-        if (state.bestOverall != null)
+          // کارت اطلاعات
           Container(
-            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: Colors.green.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.green.shade200),
+              color: Colors.black.withOpacity(0.65),
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: Colors.white24),
             ),
-            child: Text('🏆 بهترین رکورد: ${state.bestOverall} ms'),
-          ),
-        const SizedBox(height: 40),
-        ElevatedButton.icon(
-          onPressed: onStart,
-          icon: const Icon(Icons.play_arrow),
-          label: const Text('شروع', style: TextStyle(fontSize: 20)),
-          style: ElevatedButton.styleFrom(minimumSize: const Size(200, 56)),
-        ),
-      ],
-    );
-  }
-}
-
-class _GameScreen extends StatelessWidget {
-  final ReactionState state;
-  final VoidCallback onTap;
-
-  const _GameScreen({required this.state, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    String statusText;
-    Color statusColor;
-    if (state.status == ReactionStatus.waiting) {
-      statusText = '⏳ منتظر بمانید...';
-      statusColor = Colors.grey;
-    } else if (state.status == ReactionStatus.ready) {
-      statusText = '⚡ سریع لمس کن!';
-      statusColor = Colors.green;
-    } else {
-      statusText = '❌ خیلی زود!';
-      statusColor = Colors.red;
-    }
-    final color = state.status == ReactionStatus.ready
-        ? Colors.green
-        : state.status == ReactionStatus.early
-            ? Colors.red.shade300
-            : Colors.grey.shade400;
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text('تلاش ${state.attemptCount + 1} از ${state.maxAttempts}',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 40),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          width: 160,
-          height: 160,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(color: color.withOpacity(0.5), blurRadius: 30, spreadRadius: 10),
-            ],
-          ),
-          child: GestureDetector(
-            onTap: onTap,
-            behavior: HitTestBehavior.opaque,
-            child: const SizedBox.expand(),
-          ),
-        ),
-        const SizedBox(height: 40),
-        Text(statusText, style: TextStyle(fontSize: 20, color: statusColor)),
-      ],
-    );
-  }
-}
-
-class _ResultScreen extends StatelessWidget {
-  final ReactionState state;
-  final VoidCallback onNext;
-  final VoidCallback onReset;
-
-  const _ResultScreen({
-    required this.state,
-    required this.onNext,
-    required this.onReset,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        TweenAnimationBuilder(
-          tween: Tween<double>(begin: 0, end: state.lastTime.toDouble()),
-          duration: const Duration(milliseconds: 500),
-          builder: (_, value, __) => Text(
-            '${value.toInt()} ms',
-            style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.blue),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(state.ratingStars, style: const TextStyle(fontSize: 32)),
-        const SizedBox(height: 4),
-        Text(state.ratingMessage, style: const TextStyle(fontSize: 20)),
-        const SizedBox(height: 24),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: onNext,
-              icon: Icon(state.attemptCount + 1 >= state.maxAttempts ? Icons.flag : Icons.arrow_forward),
-              label: Text(state.attemptCount + 1 >= state.maxAttempts ? 'پایان' : 'تلاش بعدی'),
-            ),
-            const SizedBox(width: 16),
-            OutlinedButton.icon(
-              onPressed: onReset,
-              icon: const Icon(Icons.refresh),
-              label: const Text('شروع مجدد'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _FinishScreen extends StatelessWidget {
-  final ReactionState state;
-  final VoidCallback onReset;
-  final VoidCallback onBack;
-
-  const _FinishScreen({
-    required this.state,
-    required this.onReset,
-    required this.onBack,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final avg = state.average;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Text('🏁 جلسه کامل شد!', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 24),
-        Card(
-          elevation: 4,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                _statRow('میانگین', '${avg.toStringAsFixed(0)} ms'),
-                _statRow('بهترین جلسه', '${state.bestSession} ms'),
-                if (state.bestOverall != null) _statRow('رکورد کلی', '${state.bestOverall} ms'),
+                // BPM
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      state.bpm > 0 ? state.bpm.toString() : '--',
+                      style: const TextStyle(
+                        fontSize: 72,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.redAccent,
+                        shadows: [
+                          Shadow(
+                              blurRadius: 20,
+                              color: Colors.redAccent,
+                              offset: Offset(0, 0))
+                        ],
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 16, left: 4),
+                      child: Text('BPM', style: TextStyle(fontSize: 20)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // کیفیت
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: state.quality == 'Good'
+                        ? Colors.green
+                        : state.quality == 'Fair'
+                            ? Colors.orange
+                            : Colors.red,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'کیفیت: ${state.quality}',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // نمودار
+                if (state.signalData.isNotEmpty)
+                  SizedBox(
+                    height: 80,
+                    child: LineChart(
+                      LineChartData(
+                        gridData: const FlGridData(show: false),
+                        titlesData: const FlTitlesData(show: false),
+                        borderData: FlBorderData(show: false),
+                        lineBarsData: [
+                          LineChartBarData(
+                            spots: state.signalData
+                                .asMap()
+                                .entries
+                                .map((e) => FlSpot(e.key.toDouble(), e.value))
+                                .toList(),
+                            isCurved: true,
+                            color: Colors.redAccent,
+                            barWidth: 2,
+                            dotData: const FlDotData(show: false),
+                            belowBarData: BarAreaData(
+                              show: true,
+                              color: Colors.redAccent.withOpacity(0.2),
+                            ),
+                          ),
+                        ],
+                        minX: 0,
+                        maxX: state.signalData.length - 1.toDouble(),
+                        minY: -1.2,
+                        maxY: 1.2,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 32),
-        Text(_getOverallRating(avg)),
-        const SizedBox(height: 32),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: onReset,
-              icon: const Icon(Icons.replay),
-              label: const Text('دوباره'),
+
+          // دکمه توقف
+          Padding(
+            padding: const EdgeInsets.only(bottom: 30),
+            child: ElevatedButton.icon(
+              onPressed: () => context.read<RppgCubit>().stopMonitoring(),
+              icon: const Icon(Icons.stop),
+              label: const Text('توقف'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+              ),
             ),
-            const SizedBox(width: 16),
-            OutlinedButton.icon(
-              onPressed: onBack,
-              icon: const Icon(Icons.home),
-              label: const Text('خانه'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _statRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 18)),
-          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          ),
         ],
-      ),
-    );
-  }
-
-  String _getOverallRating(double avg) {
-    if (avg < 220) return '🌟 عالی!';
-    if (avg < 280) return '👍 خوب';
-    if (avg < 350) return '📈 قابل قبول';
-    return '💪 نیاز به تمرین';
-  }
-}
-
-// ===================== سایر بازی‌ها (ساده‌سازی شده) =====================
-
-// بازی حافظه (نمونه)
-class MemoryGame extends StatelessWidget {
-  const MemoryGame({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('بازی حافظه')),
-      body: const Center(child: Text('حافظه - در حال توسعه')),
-    );
-  }
-}
-
-class StroopGame extends StatelessWidget {
-  const StroopGame({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('تست استروپ')),
-      body: const Center(child: Text('استروپ - در حال توسعه')),
-    );
-  }
-}
-
-class NBackGame extends StatelessWidget {
-  const NBackGame({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('بازی N-Back')),
-      body: const Center(child: Text('N-Back - در حال توسعه')),
-    );
-  }
-}
-
-class NumberSequenceGame extends StatelessWidget {
-  const NumberSequenceGame({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('ترتیب اعداد')),
-      body: const Center(child: Text('ترتیب اعداد - در حال توسعه')),
-    );
-  }
-}
-
-// ========================= بخش ۴: برنامه اصلی =========================
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final storage = StorageService();
-  await storage.init();
-  runApp(MyApp(storage: storage));
-}
-
-class MyApp extends StatelessWidget {
-  final StorageService storage;
-  const MyApp({super.key, required this.storage});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'شناخت‌یار',
-      theme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'Far_Homa',
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4A6CF7)),
-      ),
-      home: MultiBlocProvider(
-        providers: [
-          BlocProvider(create: (_) => ReactionCubit(storage)),
-        ],
-        child: const HomePage(),
       ),
     );
   }
