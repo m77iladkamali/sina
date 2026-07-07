@@ -11,7 +11,6 @@ dependencies:
     sdk: flutter
   camera: ^0.11.0
   face_detection_tflite: ^5.0.6
-  open_dspc: ^0.0.3
   yuv_ffi: ^0.1.1
   fl_chart: ^0.70.2
   permission_handler: ^12.0.2
