@@ -9,17 +9,17 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  camera: ^0.11.0
-  face_detection_tflite: ^2.0.0      # نسخه ۲ (سازگار و پایدار)
-  fl_chart: ^0.70.2
-  permission_handler: ^12.0.2
-  flutter_bloc: ^8.1.6
-  equatable: ^2.0.7
+  connectivity_plus: ^6.1.5
+  cupertino_icons: ^1.0.8
+  webview_flutter: ^4.13.1
+  flutter_custom_tabs: ^2.1.0
+  flutter_inappwebview: ^6.1.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
   flutter_launcher_icons: ^0.14.3
 
 flutter_launcher_icons:
@@ -30,8 +30,10 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/images/sina.png
+
   fonts:
     - family: Far_Homa
       fonts:
