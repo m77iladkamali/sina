@@ -11,7 +11,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // ==============================
-// ۱. تعریف State‌ها
+// ۱. State‌ها
 // ==============================
 abstract class RppgState extends Equatable {
   const RppgState();
@@ -68,7 +68,7 @@ class RppgMonitoring extends RppgState {
 }
 
 // ==============================
-// ۲. Cubit (منطق اصلی)
+// ۲. Cubit
 // ==============================
 class RppgCubit extends Cubit<RppgState> {
   CameraController? _cameraController;
@@ -76,27 +76,22 @@ class RppgCubit extends Cubit<RppgState> {
   FaceDetector? _faceDetector;
   bool _isProcessing = false;
 
-  // ========== بافر سیگنال ==========
-  static const int bufferSize = 256; // باید توان ۲ باشد
+  static const int bufferSize = 256;
   final List<double> _signalBuffer = List.filled(bufferSize, 0.0);
   int _bufferIndex = 0;
   bool _bufferFull = false;
 
-  // ========== پارامترهای rPPG ==========
   static const double minBPM = 45;
   static const double maxBPM = 200;
   static const double sampleRate = 30.0;
 
-  // ========== آمار کیفیت ==========
   double _snr = 0.0;
   int _motionCounter = 0;
   double _avgBrightness = 0.0;
 
   RppgCubit() : super(RppgInitial());
 
-  // ==============================================
-  // شروع اندازه‌گیری
-  // ==============================================
+  // =========================== شروع ===========================
   Future<void> startMonitoring() async {
     try {
       emit(RppgLoading());
@@ -125,7 +120,8 @@ class RppgCubit extends Cubit<RppgState> {
       _faceDetector = FaceDetector();
       await _faceDetector!.initialize(model: FaceDetectionModel.frontCamera);
 
-      _imageSubscription = _cameraController!.startImageStream((image) {
+      // اصلاح: await برای دریافت StreamSubscription
+      _imageSubscription = await _cameraController!.startImageStream((image) {
         _processFrame(image);
       });
 
@@ -142,9 +138,7 @@ class RppgCubit extends Cubit<RppgState> {
     }
   }
 
-  // ==============================================
-  // پردازش هر فریم
-  // ==============================================
+  // =========================== پردازش فریم ===========================
   Future<void> _processFrame(CameraImage image) async {
     if (_isProcessing || _faceDetector == null) return;
     _isProcessing = true;
@@ -153,8 +147,8 @@ class RppgCubit extends Cubit<RppgState> {
       final rgbData = _convertYUVtoRGB(image);
       if (rgbData == null) return;
 
-      // تشخیص چهره با API نسخه ۴
-      final detections = await _faceDetector!.detectFromImage(
+      // استفاده از detectFromBinary (نسخه ۴)
+      final detections = await _faceDetector!.detectFromBinary(
         rgbData,
         image.width,
         image.height,
@@ -172,7 +166,7 @@ class RppgCubit extends Cubit<RppgState> {
       }
 
       final detection = detections.first;
-      final bbox = detection.boundingBox; // [x1, y1, x2, y2] نرمال‌شده ۰ تا ۱
+      final bbox = detection.boundingBox; // List<double> [x1, y1, x2, y2]
       final faceRect = Rect.fromLTRB(
         bbox[0] * image.width,
         bbox[1] * image.height,
@@ -180,7 +174,6 @@ class RppgCubit extends Cubit<RppgState> {
         bbox[3] * image.height,
       );
 
-      // ناحیه پیشانی (۲۵٪ بالای صورت)
       final foreheadRect = Rect.fromLTRB(
         faceRect.left + faceRect.width * 0.15,
         faceRect.top,
@@ -219,9 +212,7 @@ class RppgCubit extends Cubit<RppgState> {
     }
   }
 
-  // ==============================================
-  // تبدیل YUV به RGB (دستی)
-  // ==============================================
+  // =========================== تبدیل YUV -> RGB ===========================
   Uint8List? _convertYUVtoRGB(CameraImage image) {
     try {
       final width = image.width;
@@ -272,9 +263,7 @@ class RppgCubit extends Cubit<RppgState> {
     }
   }
 
-  // ==============================================
-  // استخراج سیگنال rPPG با POS
-  // ==============================================
+  // =========================== استخراج سیگنال POS ===========================
   double _extractSignal(
     Uint8List rgbData,
     int width,
@@ -314,28 +303,23 @@ class RppgCubit extends Cubit<RppgState> {
     return posSignal;
   }
 
-  // ==============================================
-  // مدیریت بافر
-  // ==============================================
+  // =========================== بافر ===========================
   void _addToBuffer(double signal) {
     _signalBuffer[_bufferIndex] = signal;
     _bufferIndex = (_bufferIndex + 1) % bufferSize;
     if (_bufferIndex == 0) _bufferFull = true;
   }
 
-  // ==============================================
-  // محاسبه BPM با FFT (پیاده‌سازی داخلی)
-  // ==============================================
+  // =========================== محاسبه BPM با FFT ===========================
   int _calculateBPM() {
     if (!_bufferFull) return 0;
 
     final n = bufferSize;
     final signal = Float32List(n);
 
-    // کپی داده‌ها به ترتیب زمان
     for (int i = 0; i < n; i++) {
       final idx = (_bufferIndex + i) % n;
-      signal[i] = _signalBuffer[idx].toFloat();
+      signal[i] = _signalBuffer[idx]; // حذف .toFloat()
     }
 
     // حذف DC
@@ -350,16 +334,11 @@ class RppgCubit extends Cubit<RppgState> {
       signal[i] *= hann;
     }
 
-    // تبدیل به اعداد مختلط برای FFT
+    // FFT
     final List<Complex> complexSignal = List.generate(n, (i) => Complex(signal[i], 0.0));
-
-    // اجرای FFT
     final fftResult = fft(complexSignal);
-
-    // محاسبه قدرمطلق
     final magnitudes = fftResult.map((c) => c.magnitude()).toList();
 
-    // یافتن فرکانس غالب در محدوده BPM
     final minFreq = minBPM / 60.0;
     final maxFreq = maxBPM / 60.0;
     final minBin = (minFreq * n / sampleRate).round();
@@ -379,7 +358,7 @@ class RppgCubit extends Cubit<RppgState> {
     final dominantFreq = (peakBin * sampleRate) / n;
     final bpm = (dominantFreq * 60).round();
 
-    // محاسبه SNR
+    // محاسبه SNR با استفاده از log (پایه ۱۰)
     double totalPower = 0;
     double signalPower = 0;
     for (int i = 0; i < n ~/ 2; i++) {
@@ -389,14 +368,17 @@ class RppgCubit extends Cubit<RppgState> {
         signalPower += mag * mag;
       }
     }
-    _snr = 10 * log10(signalPower / max(totalPower - signalPower, 1e-10));
+    final noisePower = totalPower - signalPower;
+    if (noisePower > 0) {
+      _snr = 10 * log(signalPower / noisePower) / ln10; // log طبیعی تقسیم بر ln(10)
+    } else {
+      _snr = 20.0;
+    }
 
     return bpm.clamp(0, 250);
   }
 
-  // ==============================================
-  // داده‌های نمودار (آخرین ۱۵۰ نمونه)
-  // ==============================================
+  // =========================== داده‌های نمودار ===========================
   List<double> _getSignalForChart() {
     const int chartSize = 150;
     final List<double> data = [];
@@ -420,11 +402,9 @@ class RppgCubit extends Cubit<RppgState> {
     return data;
   }
 
-  // ==============================================
-  // محاسبه کیفیت و هشدارها
-  // ==============================================
+  // =========================== کیفیت و هشدارها ===========================
   void _calculateQuality(dynamic detection, int width, int height) {
-    final bbox = detection.boundingBox;
+    final bbox = detection.boundingBox as List<double>;
     final centerX = (bbox[0] + bbox[2]) / 2;
     final centerY = (bbox[1] + bbox[3]) / 2;
 
@@ -454,9 +434,7 @@ class RppgCubit extends Cubit<RppgState> {
     return alerts;
   }
 
-  // ==============================================
-  // توقف
-  // ==============================================
+  // =========================== توقف ===========================
   void stopMonitoring() {
     _imageSubscription?.cancel();
     _cameraController?.dispose();
@@ -472,7 +450,7 @@ class RppgCubit extends Cubit<RppgState> {
 }
 
 // ==============================
-// ۳. کلاس Complex و FFT (پیاده‌سازی داخلی)
+// ۳. کلاس Complex و FFT
 // ==============================
 class Complex {
   final double real;
@@ -492,10 +470,7 @@ class Complex {
 List<Complex> fft(List<Complex> input) {
   final n = input.length;
   if (n <= 1) return input;
-
-  if (n % 2 != 0) {
-    throw ArgumentError('FFT length must be power of 2');
-  }
+  if (n % 2 != 0) throw ArgumentError('FFT length must be power of 2');
 
   final even = fft(List.generate(n ~/ 2, (i) => input[2 * i]));
   final odd = fft(List.generate(n ~/ 2, (i) => input[2 * i + 1]));
@@ -505,7 +480,6 @@ List<Complex> fft(List<Complex> input) {
     final angle = -2 * pi * k / n;
     final twiddle = Complex(cos(angle), sin(angle));
     final oddPart = odd[k] * twiddle;
-
     result[k] = even[k] + oddPart;
     result[k + n ~/ 2] = even[k] - oddPart;
   }
@@ -513,7 +487,7 @@ List<Complex> fft(List<Complex> input) {
 }
 
 // ==============================
-// ۴. ویجت‌های UI
+// ۴. ویجت‌های UI (بدون تغییر)
 // ==============================
 void main() => runApp(const MyApp());
 
@@ -551,13 +525,11 @@ class HomePage extends StatelessWidget {
 
           return Stack(
             children: [
-              // دوربین
               if (state is RppgMonitoring)
                 _buildCameraPreview(context)
               else
                 Container(color: Colors.black),
 
-              // لایه رویی
               if (state is RppgMonitoring) ...[
                 if (state.faceDetected && state.faceRect != null)
                   Positioned(
@@ -595,8 +567,7 @@ class HomePage extends StatelessWidget {
                     icon: const Icon(Icons.play_arrow),
                     label: const Text('شروع اندازه‌گیری ضربان'),
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 32, vertical: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                       textStyle: const TextStyle(fontSize: 18),
                     ),
                   ),
@@ -673,8 +644,7 @@ class HomePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                   decoration: BoxDecoration(
                     color: state.quality == 'Good'
                         ? Colors.green
@@ -685,8 +655,7 @@ class HomePage extends StatelessWidget {
                   ),
                   child: Text(
                     'کیفیت: ${state.quality}',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
                 const SizedBox(height: 20),
