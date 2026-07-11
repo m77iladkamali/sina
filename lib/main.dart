@@ -11,7 +11,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // ==============================
-// ۱. تعریف Stateها (بدون تغییر)
+// ۱. تعریف State‌ها
 // ==============================
 abstract class RppgState extends Equatable {
   const RppgState();
@@ -42,10 +42,6 @@ class RppgMonitoring extends RppgState {
     this.foreheadRect,
   });
 
-  @override
-  List<Object?> get props =>
-      [bpm, signalData, quality, alerts, faceDetected, faceRect, foreheadRect];
-
   RppgMonitoring copyWith({
     int? bpm,
     List<double>? signalData,
@@ -65,6 +61,10 @@ class RppgMonitoring extends RppgState {
       foreheadRect: foreheadRect ?? this.foreheadRect,
     );
   }
+
+  @override
+  List<Object?> get props =>
+      [bpm, signalData, quality, alerts, faceDetected, faceRect, foreheadRect];
 }
 
 // ==============================
@@ -76,8 +76,8 @@ class RppgCubit extends Cubit<RppgState> {
   FaceDetector? _faceDetector;
   bool _isProcessing = false;
 
-  // ========== بافرهای سیگنال ==========
-  static const int bufferSize = 300; // ۳۰۰ فریم ≈ ۱۰ ثانیه با ۳۰ فریم
+  // ========== بافر سیگنال ==========
+  static const int bufferSize = 256; // باید توان ۲ باشد
   final List<double> _signalBuffer = List.filled(bufferSize, 0.0);
   int _bufferIndex = 0;
   bool _bufferFull = false;
@@ -85,7 +85,7 @@ class RppgCubit extends Cubit<RppgState> {
   // ========== پارامترهای rPPG ==========
   static const double minBPM = 45;
   static const double maxBPM = 200;
-  static const double sampleRate = 30.0; // فریم بر ثانیه
+  static const double sampleRate = 30.0;
 
   // ========== آمار کیفیت ==========
   double _snr = 0.0;
@@ -95,20 +95,18 @@ class RppgCubit extends Cubit<RppgState> {
   RppgCubit() : super(RppgInitial());
 
   // ==============================================
-  // شروع اندازه‌گیری (بدون تغییر)
+  // شروع اندازه‌گیری
   // ==============================================
   Future<void> startMonitoring() async {
     try {
       emit(RppgLoading());
 
-      // مجوز دوربین
       final status = await Permission.camera.request();
       if (!status.isGranted) {
         emit(RppgInitial());
         return;
       }
 
-      // راه‌اندازی دوربین جلو
       final cameras = await availableCameras();
       final frontCamera = cameras.firstWhere(
         (cam) => cam.lensDirection == CameraLensDirection.front,
@@ -124,11 +122,9 @@ class RppgCubit extends Cubit<RppgState> {
       await _cameraController!.setFocusMode(FocusMode.locked);
       await _cameraController!.setExposureMode(ExposureMode.locked);
 
-      // مقداردهی اولیه تشخیص چهره (مدل دوربین جلو)
       _faceDetector = FaceDetector();
       await _faceDetector!.initialize(model: FaceDetectionModel.frontCamera);
 
-      // شروع استریم دوربین
       _imageSubscription = _cameraController!.startImageStream((image) {
         _processFrame(image);
       });
@@ -147,23 +143,24 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // پردازش هر فریم (بدون تغییر ساختار)
+  // پردازش هر فریم
   // ==============================================
   Future<void> _processFrame(CameraImage image) async {
     if (_isProcessing || _faceDetector == null) return;
     _isProcessing = true;
 
     try {
-      // ۱. تبدیل YUV به RGB با استفاده از کد Dart خالص
       final rgbData = _convertYUVtoRGB(image);
       if (rgbData == null) return;
 
-      // ۲. تشخیص چهره و استخراج ناحیه پیشانی
-      final result = await _faceDetector!.runAll(rgbData);
-      final detections = result.detections;
+      // تشخیص چهره با API نسخه ۴
+      final detections = await _faceDetector!.detectFromImage(
+        rgbData,
+        image.width,
+        image.height,
+      );
 
       if (detections.isEmpty) {
-        // چهره‌ای تشخیص داده نشد
         if (state is RppgMonitoring) {
           final current = state as RppgMonitoring;
           emit(current.copyWith(
@@ -174,13 +171,16 @@ class RppgCubit extends Cubit<RppgState> {
         return;
       }
 
-      // اولین چهره را انتخاب کن
       final detection = detections.first;
-      final faceRect = detection.bbox.toRect(
-        Size(image.width.toDouble(), image.height.toDouble()),
+      final bbox = detection.boundingBox; // [x1, y1, x2, y2] نرمال‌شده ۰ تا ۱
+      final faceRect = Rect.fromLTRB(
+        bbox[0] * image.width,
+        bbox[1] * image.height,
+        bbox[2] * image.width,
+        bbox[3] * image.height,
       );
 
-      // ۳. محاسبه ناحیه پیشانی (۲۵٪ بالای صورت)
+      // ناحیه پیشانی (۲۵٪ بالای صورت)
       final foreheadRect = Rect.fromLTRB(
         faceRect.left + faceRect.width * 0.15,
         faceRect.top,
@@ -188,16 +188,11 @@ class RppgCubit extends Cubit<RppgState> {
         faceRect.top + faceRect.height * 0.20,
       );
 
-      // ۴. استخراج سیگنال rPPG از ناحیه پیشانی
       final signal = _extractSignal(rgbData, image.width, image.height, foreheadRect);
-
-      // ۵. اضافه کردن به بافر و پردازش
       _addToBuffer(signal);
 
-      // ۶. محاسبه کیفیت و هشدارها
-      _calculateQuality(detection, foreheadRect);
+      _calculateQuality(detection, image.width, image.height);
 
-      // ۷. اگر بافر پر شد، BPM را محاسبه کن
       int bpm = 0;
       List<double> chartData = [];
       if (_bufferFull) {
@@ -205,7 +200,6 @@ class RppgCubit extends Cubit<RppgState> {
         chartData = _getSignalForChart();
       }
 
-      // ۸. به‌روزرسانی UI
       if (state is RppgMonitoring) {
         final current = state as RppgMonitoring;
         emit(RppgMonitoring(
@@ -226,14 +220,12 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // تبدیل YUV به RGB (با فرمول‌های استاندارد - بدون نیاز به yuv_ffi)
+  // تبدیل YUV به RGB (دستی)
   // ==============================================
   Uint8List? _convertYUVtoRGB(CameraImage image) {
     try {
       final width = image.width;
       final height = image.height;
-
-      // استخراج پلن‌ها
       final yPlane = image.planes[0];
       final uPlane = image.planes[1];
       final vPlane = image.planes[2];
@@ -242,40 +234,35 @@ class RppgCubit extends Cubit<RppgState> {
       final uBytes = uPlane.bytes;
       final vBytes = vPlane.bytes;
 
-      // پارامترهای stride
-      final yRowStride = yPlane.bytesPerRow;
-      final uvRowStride = uPlane.bytesPerRow;
-      final uvPixelStride = uPlane.bytesPerPixel ?? 2;
+      final int yRowStride = yPlane.bytesPerRow;
+      final int uvRowStride = uPlane.bytesPerRow;
+      final int uvPixelStride = uPlane.bytesPerPixel!;
 
-      // خروجی RGB (RGBA)
-      final rgba = Uint8List(width * height * 4);
+      final Uint8List rgba = Uint8List(width * height * 4);
+      int rgbaIndex = 0;
 
       for (int y = 0; y < height; y++) {
+        final int yIndex = y * yRowStride;
+        final int uvIndex = (y ~/ 2) * uvRowStride;
+
         for (int x = 0; x < width; x++) {
-          // موقعیت در پلن Y
-          final yIndex = y * yRowStride + x;
-          // موقعیت در پلن‌های UV
-          final uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
+          final int yValue = yBytes[yIndex + x];
+          final int uvX = (x ~/ 2) * uvPixelStride;
+          final int u = uBytes[uvIndex + uvX] - 128;
+          final int v = vBytes[uvIndex + uvX] - 128;
 
-          final yVal = yBytes[yIndex];
-          final uVal = uBytes[uvIndex];
-          final vVal = vBytes[uvIndex];
+          int r = (yValue + 1.402 * v).round();
+          int g = (yValue - 0.344 * u - 0.714 * v).round();
+          int b = (yValue + 1.772 * u).round();
 
-          // تبدیل YUV به RGB (فرمول استاندارد)
-          int r = (yVal + 1.402 * (vVal - 128)).round();
-          int g = (yVal - 0.344 * (uVal - 128) - 0.714 * (vVal - 128)).round();
-          int b = (yVal + 1.772 * (uVal - 128)).round();
-
-          // محدود کردن به 0-255
           r = r.clamp(0, 255);
           g = g.clamp(0, 255);
           b = b.clamp(0, 255);
 
-          final idx = (y * width + x) * 4;
-          rgba[idx] = r;
-          rgba[idx + 1] = g;
-          rgba[idx + 2] = b;
-          rgba[idx + 3] = 255; // alpha
+          rgba[rgbaIndex++] = r;
+          rgba[rgbaIndex++] = g;
+          rgba[rgbaIndex++] = b;
+          rgba[rgbaIndex++] = 255;
         }
       }
       return rgba;
@@ -286,7 +273,7 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // استخراج سیگنال rPPG با الگوریتم POS (بدون تغییر)
+  // استخراج سیگنال rPPG با POS
   // ==============================================
   double _extractSignal(
     Uint8List rgbData,
@@ -294,7 +281,6 @@ class RppgCubit extends Cubit<RppgState> {
     int height,
     Rect forehead,
   ) {
-    // محدود کردن ناحیه به اندازه تصویر
     final x1 = forehead.left.clamp(0, width - 1).toInt();
     final y1 = forehead.top.clamp(0, height - 1).toInt();
     final x2 = forehead.right.clamp(0, width - 1).toInt();
@@ -322,168 +308,94 @@ class RppgCubit extends Cubit<RppgState> {
     final avgB = sumB / count;
 
     const double alpha = 0.5;
-    double posSignal = avgG - alpha * avgB;
-
+    final posSignal = avgG - alpha * avgB;
     _avgBrightness = (avgR + avgG + avgB) / 3;
 
     return posSignal;
   }
 
   // ==============================================
-  // مدیریت بافر سیگنال (بدون تغییر)
+  // مدیریت بافر
   // ==============================================
   void _addToBuffer(double signal) {
     _signalBuffer[_bufferIndex] = signal;
     _bufferIndex = (_bufferIndex + 1) % bufferSize;
-
-    if (_bufferIndex == 0) {
-      _bufferFull = true;
-    }
+    if (_bufferIndex == 0) _bufferFull = true;
   }
 
   // ==============================================
-  // محاسبه BPM با FFT (پیاده‌سازی ساده بدون کتابخانه خارجی)
+  // محاسبه BPM با FFT (پیاده‌سازی داخلی)
   // ==============================================
   int _calculateBPM() {
     if (!_bufferFull) return 0;
 
-    // ۱. آماده‌سازی داده
     final n = bufferSize;
     final signal = Float32List(n);
 
-    // کپی کردن داده‌ها از بافر (به ترتیب)
+    // کپی داده‌ها به ترتیب زمان
     for (int i = 0; i < n; i++) {
       final idx = (_bufferIndex + i) % n;
       signal[i] = _signalBuffer[idx].toFloat();
     }
 
-    // ۲. حذف DC (میانگین‌گیری)
+    // حذف DC
     double mean = 0;
     for (int i = 0; i < n; i++) mean += signal[i];
     mean /= n;
     for (int i = 0; i < n; i++) signal[i] -= mean;
 
-    // ۳. پنجره هانینگ (کاهش نشتی طیفی)
+    // پنجره هانینگ
     for (int i = 0; i < n; i++) {
       final double hann = 0.5 * (1 - cos(2 * pi * i / (n - 1)));
       signal[i] *= hann;
     }
 
-    // ۴. اجرای FFT (حقیقی) با استفاده از تابع custom
-    final freqData = _fftReal(signal);
+    // تبدیل به اعداد مختلط برای FFT
+    final List<Complex> complexSignal = List.generate(n, (i) => Complex(signal[i], 0.0));
 
-    // ۵. پیدا کردن فرکانس غالب در محدوده BPM
-    double maxMagnitude = 0;
-    int maxIndex = -1;
+    // اجرای FFT
+    final fftResult = fft(complexSignal);
 
-    // محدوده فرکانس: ۰.۷۵ تا ۳.۳ هرتز (۴۵ تا ۲۰۰ BPM)
+    // محاسبه قدرمطلق
+    final magnitudes = fftResult.map((c) => c.magnitude()).toList();
+
+    // یافتن فرکانس غالب در محدوده BPM
     final minFreq = minBPM / 60.0;
     final maxFreq = maxBPM / 60.0;
     final minBin = (minFreq * n / sampleRate).round();
     final maxBin = (maxFreq * n / sampleRate).round();
 
-    final halfN = n ~/ 2;
-    for (int i = minBin; i < maxBin && i < halfN; i++) {
-      final real = freqData[2 * i];
-      final imag = freqData[2 * i + 1];
-      final mag = sqrt(real * real + imag * imag);
-
-      if (mag > maxMagnitude) {
-        maxMagnitude = mag;
-        maxIndex = i;
+    int peakBin = -1;
+    double maxMag = -1;
+    for (int i = minBin; i <= maxBin && i < n ~/ 2; i++) {
+      if (magnitudes[i] > maxMag) {
+        maxMag = magnitudes[i];
+        peakBin = i;
       }
     }
 
-    if (maxIndex == -1) return 0;
+    if (peakBin == -1) return 0;
 
-    // ۶. محاسبه BPM از فرکانس غالب
-    final dominantFreq = (maxIndex * sampleRate) / n;
+    final dominantFreq = (peakBin * sampleRate) / n;
     final bpm = (dominantFreq * 60).round();
 
-    // ۷. محاسبه SNR (نسبت سیگنال به نویز)
+    // محاسبه SNR
     double totalPower = 0;
     double signalPower = 0;
-    final peakBin = maxIndex;
-
-    for (int i = 0; i < halfN; i++) {
-      final real = freqData[2 * i];
-      final imag = freqData[2 * i + 1];
-      final mag = sqrt(real * real + imag * imag);
+    for (int i = 0; i < n ~/ 2; i++) {
+      final mag = magnitudes[i];
       totalPower += mag * mag;
-
       if ((i - peakBin).abs() <= 2) {
         signalPower += mag * mag;
       }
     }
-
     _snr = 10 * log10(signalPower / max(totalPower - signalPower, 1e-10));
 
     return bpm.clamp(0, 250);
   }
 
   // ==============================================
-  // پیاده‌سازی FFT برای اعداد حقیقی (Cooley-Tukey)
-  // ==============================================
-  Float32List _fftReal(Float32List real) {
-    final n = real.length;
-    if (n < 2) return Float32List(2); // بازگشت با اندازه ۲ برای پوشش
-
-    // تبدیل به عدد مختلط (با قسمت موهومی صفر)
-    final complex = Float32List(2 * n);
-    for (int i = 0; i < n; i++) {
-      complex[2 * i] = real[i];
-      complex[2 * i + 1] = 0.0;
-    }
-
-    // اجرای FFT مختلط
-    _fft(complex, n);
-
-    // بازگشت داده مختلط
-    return complex;
-  }
-
-  void _fft(Float32List data, int n) {
-    if (n <= 1) return;
-
-    // تقسیم به زوج و فرد
-    final even = Float32List(n ~/ 2 * 2);
-    final odd = Float32List(n ~/ 2 * 2);
-    for (int i = 0; i < n ~/ 2; i++) {
-      even[2 * i] = data[4 * i];
-      even[2 * i + 1] = data[4 * i + 1];
-      odd[2 * i] = data[4 * i + 2];
-      odd[2 * i + 1] = data[4 * i + 3];
-    }
-
-    // بازگشت
-    _fft(even, n ~/ 2);
-    _fft(odd, n ~/ 2);
-
-    // ترکیب
-    for (int k = 0; k < n ~/ 2; k++) {
-      final theta = -2 * pi * k / n;
-      final cosTheta = cos(theta);
-      final sinTheta = sin(theta);
-
-      final realOdd = odd[2 * k];
-      final imagOdd = odd[2 * k + 1];
-
-      final realTwiddle = realOdd * cosTheta - imagOdd * sinTheta;
-      final imagTwiddle = realOdd * sinTheta + imagOdd * cosTheta;
-
-      final realEven = even[2 * k];
-      final imagEven = even[2 * k + 1];
-
-      data[2 * k] = realEven + realTwiddle;
-      data[2 * k + 1] = imagEven + imagTwiddle;
-
-      data[2 * (k + n ~/ 2)] = realEven - realTwiddle;
-      data[2 * (k + n ~/ 2) + 1] = imagEven - imagTwiddle;
-    }
-  }
-
-  // ==============================================
-  // گرفتن داده برای نمودار (بدون تغییر)
+  // داده‌های نمودار (آخرین ۱۵۰ نمونه)
   // ==============================================
   List<double> _getSignalForChart() {
     const int chartSize = 150;
@@ -495,7 +407,6 @@ class RppgCubit extends Cubit<RppgState> {
       data.add(_signalBuffer[idx]);
     }
 
-    // نرمال‌سازی برای نمایش بهتر
     if (data.isEmpty) return [];
     double minVal = data.reduce(min);
     double maxVal = data.reduce(max);
@@ -506,16 +417,16 @@ class RppgCubit extends Cubit<RppgState> {
         data[i] = ((data[i] - minVal) / range) * 2 - 1;
       }
     }
-
     return data;
   }
 
   // ==============================================
-  // محاسبه کیفیت و هشدارها (بدون تغییر)
+  // محاسبه کیفیت و هشدارها
   // ==============================================
-  void _calculateQuality(FaceDetectionResult detection, Rect foreheadRect) {
-    final centerX = detection.bbox.center.dx;
-    final centerY = detection.bbox.center.dy;
+  void _calculateQuality(dynamic detection, int width, int height) {
+    final bbox = detection.boundingBox;
+    final centerX = (bbox[0] + bbox[2]) / 2;
+    final centerY = (bbox[1] + bbox[3]) / 2;
 
     if (centerX < 0.1 || centerX > 0.9 || centerY < 0.1 || centerY > 0.9) {
       _motionCounter++;
@@ -536,26 +447,15 @@ class RppgCubit extends Cubit<RppgState> {
 
   List<String> _getAlerts() {
     final List<String> alerts = [];
-
-    if (_motionCounter > 10) {
-      alerts.add('⚠️ حرکت زیاد سر');
-    }
-
-    if (_avgBrightness < 40) {
-      alerts.add('💡 نور محیط کم است');
-    } else if (_avgBrightness > 230) {
-      alerts.add('☀️ نور محیط زیاد است');
-    }
-
-    if (_snr < 2 && _bufferFull) {
-      alerts.add('📶 سیگنال ضعیف');
-    }
-
+    if (_motionCounter > 10) alerts.add('⚠️ حرکت زیاد سر');
+    if (_avgBrightness < 40) alerts.add('💡 نور محیط کم است');
+    if (_avgBrightness > 230) alerts.add('☀️ نور محیط زیاد است');
+    if (_snr < 2 && _bufferFull) alerts.add('📶 سیگنال ضعیف');
     return alerts;
   }
 
   // ==============================================
-  // توقف اندازه‌گیری (بدون تغییر)
+  // توقف
   // ==============================================
   void stopMonitoring() {
     _imageSubscription?.cancel();
@@ -572,7 +472,48 @@ class RppgCubit extends Cubit<RppgState> {
 }
 
 // ==============================
-// ۳. ویجت‌های UI (بدون تغییر)
+// ۳. کلاس Complex و FFT (پیاده‌سازی داخلی)
+// ==============================
+class Complex {
+  final double real;
+  final double imag;
+  Complex(this.real, this.imag);
+
+  Complex operator +(Complex other) => Complex(real + other.real, imag + other.imag);
+  Complex operator -(Complex other) => Complex(real - other.real, imag - other.imag);
+  Complex operator *(Complex other) => Complex(
+        real * other.real - imag * other.imag,
+        real * other.imag + imag * other.real,
+      );
+
+  double magnitude() => sqrt(real * real + imag * imag);
+}
+
+List<Complex> fft(List<Complex> input) {
+  final n = input.length;
+  if (n <= 1) return input;
+
+  if (n % 2 != 0) {
+    throw ArgumentError('FFT length must be power of 2');
+  }
+
+  final even = fft(List.generate(n ~/ 2, (i) => input[2 * i]));
+  final odd = fft(List.generate(n ~/ 2, (i) => input[2 * i + 1]));
+
+  final result = List<Complex>.filled(n, Complex(0, 0));
+  for (int k = 0; k < n ~/ 2; k++) {
+    final angle = -2 * pi * k / n;
+    final twiddle = Complex(cos(angle), sin(angle));
+    final oddPart = odd[k] * twiddle;
+
+    result[k] = even[k] + oddPart;
+    result[k + n ~/ 2] = even[k] - oddPart;
+  }
+  return result;
+}
+
+// ==============================
+// ۴. ویجت‌های UI
 // ==============================
 void main() => runApp(const MyApp());
 
