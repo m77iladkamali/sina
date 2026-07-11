@@ -10,12 +10,11 @@ dependencies:
   flutter:
     sdk: flutter
   camera: ^0.11.0
-  face_detection_tflite: ^4.0.0      # نسخه ۴ (سازگار با SDK 3.9.2)
+  face_detection_tflite: ^4.0.0
   fl_chart: ^0.70.2
   permission_handler: ^12.0.2
   flutter_bloc: ^8.1.6
   equatable: ^2.0.7
-  # (yuv_ffi و open_dspc حذف شدند – کد از تبدیل دستی استفاده می‌کند)
 
 dev_dependencies:
   flutter_test:
