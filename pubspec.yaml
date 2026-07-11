@@ -10,20 +10,18 @@ dependencies:
   flutter:
     sdk: flutter
   camera: ^0.11.0
-  face_detection_tflite: ^5.0.6
+  face_detection_tflite: ^4.0.0      # نسخه ۴ (سازگار با SDK 3.9.2)
   fl_chart: ^0.70.2
   permission_handler: ^12.0.2
   flutter_bloc: ^8.1.6
   equatable: ^2.0.7
+  # (yuv_ffi و open_dspc حذف شدند – کد از تبدیل دستی استفاده می‌کند)
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.3
-
-dependency_overrides:
-  meta: 1.17.0   # حل تعارض بین face_detection_tflite و flutter_test
 
 flutter_launcher_icons:
   android: true
@@ -33,10 +31,8 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
-
   assets:
     - assets/images/sina.png
-
   fonts:
     - family: Far_Homa
       fonts:
