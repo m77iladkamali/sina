@@ -68,7 +68,7 @@ class RppgMonitoring extends RppgState {
 }
 
 // ==============================
-// ۲. Cubit
+// ۲. Cubit (منطق اصلی)
 // ==============================
 class RppgCubit extends Cubit<RppgState> {
   CameraController? _cameraController;
@@ -78,14 +78,14 @@ class RppgCubit extends Cubit<RppgState> {
   FaceDetector? _faceDetector;
   bool _isProcessing = false;
 
-  static const int bufferSize = 256;
+  static const int bufferSize = 256; // توان ۲ برای FFT
   final List<double> _signalBuffer = List.filled(bufferSize, 0.0);
   int _bufferIndex = 0;
   bool _bufferFull = false;
 
   static const double minBPM = 45;
   static const double maxBPM = 200;
-  static const double sampleRate = 30.0;
+  static const double sampleRate = 30.0; // فرض بر ۳۰ فریم بر ثانیه
 
   double _snr = 0.0;
   int _motionCounter = 0;
@@ -119,10 +119,11 @@ class RppgCubit extends Cubit<RppgState> {
       await _cameraController!.setFocusMode(FocusMode.locked);
       await _cameraController!.setExposureMode(ExposureMode.locked);
 
+      // مقداردهی اولیه تشخیص چهره
       _faceDetector = FaceDetector();
       await _faceDetector!.initialize(model: FaceDetectionModel.frontCamera);
 
-      // راه‌اندازی استریم تصاویر از دوربین
+      // راه‌اندازی استریم تصاویر
       _cameraController!.startImageStream((image) {
         _imageStreamController.add(image);
       });
@@ -153,7 +154,7 @@ class RppgCubit extends Cubit<RppgState> {
       final rgbData = _convertYUVtoRGB(image);
       if (rgbData == null) return;
 
-      // استفاده از detectFromImage (نسخه ۴)
+      // تشخیص چهره با متد detectFromImage (نسخه ۲)
       final detections = await _faceDetector!.detectFromImage(
         rgbData,
         image.width,
@@ -172,7 +173,7 @@ class RppgCubit extends Cubit<RppgState> {
       }
 
       final detection = detections.first;
-      final bbox = detection.boundingBox; // List<double> [x1, y1, x2, y2]
+      final bbox = detection.boundingBox; // List<double> [x1, y1, x2, y2] نرمال‌شده
       final faceRect = Rect.fromLTRB(
         bbox[0] * image.width,
         bbox[1] * image.height,
@@ -180,6 +181,7 @@ class RppgCubit extends Cubit<RppgState> {
         bbox[3] * image.height,
       );
 
+      // ناحیه پیشانی (۲۵٪ بالای صورت)
       final foreheadRect = Rect.fromLTRB(
         faceRect.left + faceRect.width * 0.15,
         faceRect.top,
@@ -218,7 +220,7 @@ class RppgCubit extends Cubit<RppgState> {
     }
   }
 
-  // =========================== تبدیل YUV -> RGB ===========================
+  // =========================== تبدیل YUV -> RGB (دستی) ===========================
   Uint8List? _convertYUVtoRGB(CameraImage image) {
     try {
       final width = image.width;
@@ -494,7 +496,7 @@ List<Complex> fft(List<Complex> input) {
 }
 
 // ==============================
-// ۴. ویجت‌های UI (بدون تغییر)
+// ۴. ویجت‌های UI
 // ==============================
 void main() => runApp(const MyApp());
 
