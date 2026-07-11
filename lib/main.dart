@@ -8,12 +8,10 @@ import 'package:face_detection_tflite/face_detection_tflite.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:open_dspc/open_dspc.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:yuv_ffi/yuv_ffi.dart';
 
 // ==============================
-// ۱. تعریف Stateها
+// ۱. تعریف Stateها (بدون تغییر)
 // ==============================
 abstract class RppgState extends Equatable {
   const RppgState();
@@ -47,6 +45,26 @@ class RppgMonitoring extends RppgState {
   @override
   List<Object?> get props =>
       [bpm, signalData, quality, alerts, faceDetected, faceRect, foreheadRect];
+
+  RppgMonitoring copyWith({
+    int? bpm,
+    List<double>? signalData,
+    String? quality,
+    List<String>? alerts,
+    bool? faceDetected,
+    Rect? faceRect,
+    Rect? foreheadRect,
+  }) {
+    return RppgMonitoring(
+      bpm: bpm ?? this.bpm,
+      signalData: signalData ?? this.signalData,
+      quality: quality ?? this.quality,
+      alerts: alerts ?? this.alerts,
+      faceDetected: faceDetected ?? this.faceDetected,
+      faceRect: faceRect ?? this.faceRect,
+      foreheadRect: foreheadRect ?? this.foreheadRect,
+    );
+  }
 }
 
 // ==============================
@@ -77,7 +95,7 @@ class RppgCubit extends Cubit<RppgState> {
   RppgCubit() : super(RppgInitial());
 
   // ==============================================
-  // شروع اندازه‌گیری
+  // شروع اندازه‌گیری (بدون تغییر)
   // ==============================================
   Future<void> startMonitoring() async {
     try {
@@ -129,14 +147,14 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // پردازش هر فریم (در ترد اصلی - اما سریع)
+  // پردازش هر فریم (بدون تغییر ساختار)
   // ==============================================
   Future<void> _processFrame(CameraImage image) async {
     if (_isProcessing || _faceDetector == null) return;
     _isProcessing = true;
 
     try {
-      // ۱. تبدیل YUV به RGB با yuv_ffi (C++ FFI - بسیار سریع)
+      // ۱. تبدیل YUV به RGB با استفاده از کد Dart خالص
       final rgbData = _convertYUVtoRGB(image);
       if (rgbData == null) return;
 
@@ -208,32 +226,58 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // تبدیل YUV به RGB (با yuv_ffi - C++ FFI)
+  // تبدیل YUV به RGB (با فرمول‌های استاندارد - بدون نیاز به yuv_ffi)
   // ==============================================
   Uint8List? _convertYUVtoRGB(CameraImage image) {
     try {
       final width = image.width;
       final height = image.height;
 
-      // استخراج پلن‌های YUV
+      // استخراج پلن‌ها
       final yPlane = image.planes[0];
       final uPlane = image.planes[1];
       final vPlane = image.planes[2];
 
-      // ساخت YuvImage با فرمت I420
-      final yuvImage = YuvImage.i420(
-        width,
-        height,
-        yPlane.bytes,
-        uPlane.bytes,
-        vPlane.bytes,
-        yRowStride: yPlane.bytesPerRow,
-        uvRowStride: uPlane.bytesPerRow,
-        uvPixelStride: uPlane.bytesPerPixel ?? 2,
-      );
+      final yBytes = yPlane.bytes;
+      final uBytes = uPlane.bytes;
+      final vBytes = vPlane.bytes;
 
-      // تبدیل به RGBA8888
-      final rgba = yuvImage.toRgba8888();
+      // پارامترهای stride
+      final yRowStride = yPlane.bytesPerRow;
+      final uvRowStride = uPlane.bytesPerRow;
+      final uvPixelStride = uPlane.bytesPerPixel ?? 2;
+
+      // خروجی RGB (RGBA)
+      final rgba = Uint8List(width * height * 4);
+
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          // موقعیت در پلن Y
+          final yIndex = y * yRowStride + x;
+          // موقعیت در پلن‌های UV
+          final uvIndex = (y ~/ 2) * uvRowStride + (x ~/ 2) * uvPixelStride;
+
+          final yVal = yBytes[yIndex];
+          final uVal = uBytes[uvIndex];
+          final vVal = vBytes[uvIndex];
+
+          // تبدیل YUV به RGB (فرمول استاندارد)
+          int r = (yVal + 1.402 * (vVal - 128)).round();
+          int g = (yVal - 0.344 * (uVal - 128) - 0.714 * (vVal - 128)).round();
+          int b = (yVal + 1.772 * (uVal - 128)).round();
+
+          // محدود کردن به 0-255
+          r = r.clamp(0, 255);
+          g = g.clamp(0, 255);
+          b = b.clamp(0, 255);
+
+          final idx = (y * width + x) * 4;
+          rgba[idx] = r;
+          rgba[idx + 1] = g;
+          rgba[idx + 2] = b;
+          rgba[idx + 3] = 255; // alpha
+        }
+      }
       return rgba;
     } catch (e) {
       debugPrint('YUV conversion error: $e');
@@ -242,7 +286,7 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // استخراج سیگنال rPPG با الگوریتم POS
+  // استخراج سیگنال rPPG با الگوریتم POS (بدون تغییر)
   // ==============================================
   double _extractSignal(
     Uint8List rgbData,
@@ -261,7 +305,6 @@ class RppgCubit extends Cubit<RppgState> {
     double sumR = 0, sumG = 0, sumB = 0;
     int count = 0;
 
-    // محاسبه میانگین RGB در ناحیه پیشانی
     for (int y = y1; y < y2; y++) {
       for (int x = x1; x < x2; x++) {
         final index = (y * width + x) * 4;
@@ -278,31 +321,16 @@ class RppgCubit extends Cubit<RppgState> {
     final avgG = sumG / count;
     final avgB = sumB / count;
 
-    // ==========================================
-    // الگوریتم POS (Plane-Orthogonal-to-Skin)
-    // ==========================================
-    // Paper: "Algorithmic Principles of Remote PPG" (Wang et al. 2017)
-    // https://ieeexplore.ieee.org/document/7565547
-
-    // نرمال‌سازی سیگنال‌ها (میانگین‌گیری زمان‌دار - برای سادگی از داده‌های قبلی استفاده می‌کنیم)
-    // در اینجا از یک تقریب ساده استفاده می‌کنیم:
-    // S = G - B (تفریق کانال سبز و آبی برای حذف نویز حرکت)
-
-    // POS: سیگنال خروجی = G - alpha * B
-    // alpha = std(G) / std(B) (نسبت انحراف معیار)
-    // برای سادگی از alpha = 0.5 استفاده می‌کنیم (مقدار معمول در مقالات)
-
     const double alpha = 0.5;
     double posSignal = avgG - alpha * avgB;
 
-    // ذخیره روشنایی برای تشخیص نور
     _avgBrightness = (avgR + avgG + avgB) / 3;
 
     return posSignal;
   }
 
   // ==============================================
-  // مدیریت بافر سیگنال
+  // مدیریت بافر سیگنال (بدون تغییر)
   // ==============================================
   void _addToBuffer(double signal) {
     _signalBuffer[_bufferIndex] = signal;
@@ -314,7 +342,7 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // محاسبه BPM با FFT (با استفاده از open_dspc)
+  // محاسبه BPM با FFT (پیاده‌سازی ساده بدون کتابخانه خارجی)
   // ==============================================
   int _calculateBPM() {
     if (!_bufferFull) return 0;
@@ -341,9 +369,8 @@ class RppgCubit extends Cubit<RppgState> {
       signal[i] *= hann;
     }
 
-    // ۴. اجرای FFT با open_dspc
-    final fftPlan = RfftPlan(n);
-    final freqData = fftPlan.execute(signal);
+    // ۴. اجرای FFT (حقیقی) با استفاده از تابع custom
+    final freqData = _fftReal(signal);
 
     // ۵. پیدا کردن فرکانس غالب در محدوده BPM
     double maxMagnitude = 0;
@@ -355,9 +382,10 @@ class RppgCubit extends Cubit<RppgState> {
     final minBin = (minFreq * n / sampleRate).round();
     final maxBin = (maxFreq * n / sampleRate).round();
 
-    for (int i = minBin; i < maxBin && i < freqData.length; i++) {
-      final real = freqData[i].real;
-      final imag = freqData[i].imag;
+    final halfN = n ~/ 2;
+    for (int i = minBin; i < maxBin && i < halfN; i++) {
+      final real = freqData[2 * i];
+      final imag = freqData[2 * i + 1];
       final mag = sqrt(real * real + imag * imag);
 
       if (mag > maxMagnitude) {
@@ -377,13 +405,12 @@ class RppgCubit extends Cubit<RppgState> {
     double signalPower = 0;
     final peakBin = maxIndex;
 
-    for (int i = 0; i < freqData.length; i++) {
-      final real = freqData[i].real;
-      final imag = freqData[i].imag;
+    for (int i = 0; i < halfN; i++) {
+      final real = freqData[2 * i];
+      final imag = freqData[2 * i + 1];
       final mag = sqrt(real * real + imag * imag);
       totalPower += mag * mag;
 
-      // سیگنال: پیک ± ۲ باند
       if ((i - peakBin).abs() <= 2) {
         signalPower += mag * mag;
       }
@@ -395,7 +422,68 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // گرفتن داده برای نمودار (آخرین ۱۵۰ نمونه)
+  // پیاده‌سازی FFT برای اعداد حقیقی (Cooley-Tukey)
+  // ==============================================
+  Float32List _fftReal(Float32List real) {
+    final n = real.length;
+    if (n < 2) return Float32List(2); // بازگشت با اندازه ۲ برای پوشش
+
+    // تبدیل به عدد مختلط (با قسمت موهومی صفر)
+    final complex = Float32List(2 * n);
+    for (int i = 0; i < n; i++) {
+      complex[2 * i] = real[i];
+      complex[2 * i + 1] = 0.0;
+    }
+
+    // اجرای FFT مختلط
+    _fft(complex, n);
+
+    // بازگشت داده مختلط
+    return complex;
+  }
+
+  void _fft(Float32List data, int n) {
+    if (n <= 1) return;
+
+    // تقسیم به زوج و فرد
+    final even = Float32List(n ~/ 2 * 2);
+    final odd = Float32List(n ~/ 2 * 2);
+    for (int i = 0; i < n ~/ 2; i++) {
+      even[2 * i] = data[4 * i];
+      even[2 * i + 1] = data[4 * i + 1];
+      odd[2 * i] = data[4 * i + 2];
+      odd[2 * i + 1] = data[4 * i + 3];
+    }
+
+    // بازگشت
+    _fft(even, n ~/ 2);
+    _fft(odd, n ~/ 2);
+
+    // ترکیب
+    for (int k = 0; k < n ~/ 2; k++) {
+      final theta = -2 * pi * k / n;
+      final cosTheta = cos(theta);
+      final sinTheta = sin(theta);
+
+      final realOdd = odd[2 * k];
+      final imagOdd = odd[2 * k + 1];
+
+      final realTwiddle = realOdd * cosTheta - imagOdd * sinTheta;
+      final imagTwiddle = realOdd * sinTheta + imagOdd * cosTheta;
+
+      final realEven = even[2 * k];
+      final imagEven = even[2 * k + 1];
+
+      data[2 * k] = realEven + realTwiddle;
+      data[2 * k + 1] = imagEven + imagTwiddle;
+
+      data[2 * (k + n ~/ 2)] = realEven - realTwiddle;
+      data[2 * (k + n ~/ 2) + 1] = imagEven - imagTwiddle;
+    }
+  }
+
+  // ==============================================
+  // گرفتن داده برای نمودار (بدون تغییر)
   // ==============================================
   List<double> _getSignalForChart() {
     const int chartSize = 150;
@@ -423,16 +511,12 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // محاسبه کیفیت و هشدارها
+  // محاسبه کیفیت و هشدارها (بدون تغییر)
   // ==============================================
   void _calculateQuality(FaceDetectionResult detection, Rect foreheadRect) {
-    // تشخیص حرکت: تغییر موقعیت چهره
-    // (برای سادگی، از مختصات استفاده می‌کنیم)
     final centerX = detection.bbox.center.dx;
     final centerY = detection.bbox.center.dy;
 
-    // حرکت زیاد سر: اگر چهره به لبه‌ها نزدیک باشد یا تغییرات ناگهانی داشته باشد
-    // در اینجا یک تقریب ساده
     if (centerX < 0.1 || centerX > 0.9 || centerY < 0.1 || centerY > 0.9) {
       _motionCounter++;
     } else {
@@ -441,7 +525,6 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   String _getQualityString() {
-    // کیفیت بر اساس SNR و حرکت و نور
     if (_snr > 8 && _motionCounter < 5 && _avgBrightness > 50 && _avgBrightness < 220) {
       return 'Good';
     } else if (_snr > 4 && _motionCounter < 15 && _avgBrightness > 30 && _avgBrightness < 240) {
@@ -472,7 +555,7 @@ class RppgCubit extends Cubit<RppgState> {
   }
 
   // ==============================================
-  // توقف اندازه‌گیری
+  // توقف اندازه‌گیری (بدون تغییر)
   // ==============================================
   void stopMonitoring() {
     _imageSubscription?.cancel();
@@ -489,7 +572,7 @@ class RppgCubit extends Cubit<RppgState> {
 }
 
 // ==============================
-// ۳. ویجت‌های UI
+// ۳. ویجت‌های UI (بدون تغییر)
 // ==============================
 void main() => runApp(const MyApp());
 
@@ -535,7 +618,6 @@ class HomePage extends StatelessWidget {
 
               // لایه رویی
               if (state is RppgMonitoring) ...[
-                // کادر صورت (سبز)
                 if (state.faceDetected && state.faceRect != null)
                   Positioned(
                     left: state.faceRect!.left,
@@ -549,7 +631,6 @@ class HomePage extends StatelessWidget {
                       ),
                     ),
                   ),
-                // کادر پیشانی (قرمز - ناحیه استخراج سیگنال)
                 if (state.faceDetected && state.foreheadRect != null)
                   Positioned(
                     left: state.foreheadRect!.left,
@@ -599,7 +680,6 @@ class HomePage extends StatelessWidget {
     return SafeArea(
       child: Column(
         children: [
-          // هشدارها
           if (state.alerts.isNotEmpty)
             Container(
               margin: const EdgeInsets.all(12),
@@ -616,8 +696,6 @@ class HomePage extends StatelessWidget {
               ),
             ),
           const Spacer(),
-
-          // کارت اطلاعات
           Container(
             margin: const EdgeInsets.all(20),
             padding: const EdgeInsets.all(24),
@@ -628,7 +706,6 @@ class HomePage extends StatelessWidget {
             ),
             child: Column(
               children: [
-                // BPM
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -654,8 +731,6 @@ class HomePage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 8),
-
-                // کیفیت
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
@@ -674,8 +749,6 @@ class HomePage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // نمودار
                 if (state.signalData.isNotEmpty)
                   SizedBox(
                     height: 80,
@@ -711,8 +784,6 @@ class HomePage extends StatelessWidget {
               ],
             ),
           ),
-
-          // دکمه توقف
           Padding(
             padding: const EdgeInsets.only(bottom: 30),
             child: ElevatedButton.icon(
