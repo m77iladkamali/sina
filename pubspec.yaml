@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   camera: ^0.11.0
-  face_detection_tflite: ^4.0.0
+  face_detection_tflite: ^2.0.0      # نسخه ۲ (سازگار و پایدار)
   fl_chart: ^0.70.2
   permission_handler: ^12.0.2
   flutter_bloc: ^8.1.6
