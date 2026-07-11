@@ -73,6 +73,8 @@ class RppgMonitoring extends RppgState {
 class RppgCubit extends Cubit<RppgState> {
   CameraController? _cameraController;
   StreamSubscription<CameraImage>? _imageSubscription;
+  final StreamController<CameraImage> _imageStreamController =
+      StreamController<CameraImage>.broadcast();
   FaceDetector? _faceDetector;
   bool _isProcessing = false;
 
@@ -120,8 +122,12 @@ class RppgCubit extends Cubit<RppgState> {
       _faceDetector = FaceDetector();
       await _faceDetector!.initialize(model: FaceDetectionModel.frontCamera);
 
-      // اصلاح: await برای دریافت StreamSubscription
-      _imageSubscription = await _cameraController!.startImageStream((image) {
+      // راه‌اندازی استریم تصاویر از دوربین
+      _cameraController!.startImageStream((image) {
+        _imageStreamController.add(image);
+      });
+
+      _imageSubscription = _imageStreamController.stream.listen((image) {
         _processFrame(image);
       });
 
@@ -147,8 +153,8 @@ class RppgCubit extends Cubit<RppgState> {
       final rgbData = _convertYUVtoRGB(image);
       if (rgbData == null) return;
 
-      // استفاده از detectFromBinary (نسخه ۴)
-      final detections = await _faceDetector!.detectFromBinary(
+      // استفاده از detectFromImage (نسخه ۴)
+      final detections = await _faceDetector!.detectFromImage(
         rgbData,
         image.width,
         image.height,
@@ -319,7 +325,7 @@ class RppgCubit extends Cubit<RppgState> {
 
     for (int i = 0; i < n; i++) {
       final idx = (_bufferIndex + i) % n;
-      signal[i] = _signalBuffer[idx]; // حذف .toFloat()
+      signal[i] = _signalBuffer[idx];
     }
 
     // حذف DC
@@ -358,7 +364,7 @@ class RppgCubit extends Cubit<RppgState> {
     final dominantFreq = (peakBin * sampleRate) / n;
     final bpm = (dominantFreq * 60).round();
 
-    // محاسبه SNR با استفاده از log (پایه ۱۰)
+    // محاسبه SNR
     double totalPower = 0;
     double signalPower = 0;
     for (int i = 0; i < n ~/ 2; i++) {
@@ -370,7 +376,7 @@ class RppgCubit extends Cubit<RppgState> {
     }
     final noisePower = totalPower - signalPower;
     if (noisePower > 0) {
-      _snr = 10 * log(signalPower / noisePower) / ln10; // log طبیعی تقسیم بر ln(10)
+      _snr = 10 * log(signalPower / noisePower) / ln10;
     } else {
       _snr = 20.0;
     }
@@ -437,6 +443,7 @@ class RppgCubit extends Cubit<RppgState> {
   // =========================== توقف ===========================
   void stopMonitoring() {
     _imageSubscription?.cancel();
+    _imageStreamController.close();
     _cameraController?.dispose();
     _faceDetector?.dispose();
     emit(RppgInitial());
