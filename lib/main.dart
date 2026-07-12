@@ -1,23 +1,22 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:heart_rate/heart_rate.dart';
 import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // بررسی دسترسی به دوربین
   try {
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
       runApp(const ErrorApp(message: 'دوربین در دسترس نیست!'));
       return;
     }
+    runApp(const MyApp());
   } catch (e) {
     runApp(ErrorApp(message: 'خطا در دسترسی به دوربین: $e'));
-    return;
   }
-
-  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -66,39 +65,171 @@ class HeartRateMonitorScreen extends StatefulWidget {
 }
 
 class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  late final HeartRateDetector _detector;
-  int _heartRate = 0;
+  CameraController? _controller;
   bool _isMonitoring = false;
+  int _heartRate = 0;
+  final List<int> _brightnessHistory = [];
+  Timer? _timer;
+  int _frameCount = 0;
+
+  // تنظیمات الگوریتم
+  static const int sampleRate = 30; // ۳۰ فریم در ثانیه
+  static const int windowSize = 150; // ۵ ثانیه داده (برای دقت بهتر)
 
   @override
   void initState() {
     super.initState();
-    _detector = HeartRateDetector();
+    _initCamera();
+  }
 
-    // گوش‌سپاری به جریان ضربان قلب
-    _detector.heartRateStream.listen((heartRate) {
-      if (mounted) {
-        setState(() {
-          _heartRate = heartRate;
-        });
-      }
-    });
+  Future<void> _initCamera() async {
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) return;
+
+    _controller = CameraController(
+      cameras[0],
+      ResolutionPreset.medium,
+    );
+    await _controller!.initialize();
+    if (mounted) setState(() {});
   }
 
   void _toggleMonitoring() {
     if (_isMonitoring) {
-      _detector.stop();
+      _stopMonitoring();
     } else {
-      _detector.start();
+      _startMonitoring();
     }
-    setState(() {
-      _isMonitoring = !_isMonitoring;
-    });
+  }
+
+  void _startMonitoring() {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    _isMonitoring = true;
+    _brightnessHistory.clear();
+    _heartRate = 0;
+    _frameCount = 0;
+
+    // شروع تحلیل فریم‌ها
+    _timer = Timer.periodic(
+      Duration(milliseconds: 1000 ~/ sampleRate),
+      (timer) async {
+        if (!_isMonitoring) return;
+        await _captureAndAnalyzeFrame();
+      },
+    );
+
+    setState(() {});
+  }
+
+  void _stopMonitoring() {
+    _isMonitoring = false;
+    _timer?.cancel();
+    _timer = null;
+    _heartRate = 0;
+    setState(() {});
+  }
+
+  Future<void> _captureAndAnalyzeFrame() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    try {
+      final image = await _controller!.takePicture();
+      final bytes = await image.readAsBytes();
+      final img.Image? decoded = img.decodeImage(bytes);
+
+      if (decoded == null) return;
+
+      // محاسبه میانگین روشنایی در ناحیه مرکزی (چهره)
+      int centerX = decoded.width ~/ 2;
+      int centerY = decoded.height ~/ 2;
+      int radius = min(decoded.width, decoded.height) ~/ 4;
+
+      int totalBrightness = 0;
+      int pixelCount = 0;
+
+      for (int y = centerY - radius; y < centerY + radius; y++) {
+        for (int x = centerX - radius; x < centerX + radius; x++) {
+          if (x >= 0 && x < decoded.width && y >= 0 && y < decoded.height) {
+            final pixel = decoded.getPixel(x, y);
+            // تبدیل به روشنایی (Luminance)
+            final r = img.getRed(pixel);
+            final g = img.getGreen(pixel);
+            final b = img.getBlue(pixel);
+            final brightness = (0.299 * r + 0.587 * g + 0.114 * b).toInt();
+            totalBrightness += brightness;
+            pixelCount++;
+          }
+        }
+      }
+
+      if (pixelCount == 0) return;
+
+      final avgBrightness = totalBrightness ~/ pixelCount;
+      _brightnessHistory.add(avgBrightness);
+
+      // نگه‌داشتن فقط پنجره زمانی مشخص
+      if (_brightnessHistory.length > windowSize) {
+        _brightnessHistory.removeAt(0);
+      }
+
+      _frameCount++;
+
+      // هر ۵ ثانیه یک بار محاسبه (زمانی که داده کافی داریم)
+      if (_frameCount % (sampleRate * 5) == 0 &&
+          _brightnessHistory.length >= windowSize) {
+        final heartRate = _calculateHeartRate(_brightnessHistory, sampleRate);
+        if (mounted) {
+          setState(() {
+            _heartRate = heartRate;
+          });
+        }
+      }
+    } catch (e) {
+      print('خطا در پردازش فریم: $e');
+    }
+  }
+
+  int _calculateHeartRate(List<int> brightnessData, int fps) {
+    // الگوریتم ساده: تشخیص قله‌ها در سیگنال (تغییرات روشنایی)
+    if (brightnessData.length < 10) return 0;
+
+    // نرمال‌سازی داده‌ها
+    double mean = brightnessData.reduce((a, b) => a + b) / brightnessData.length;
+    List<double> normalized = brightnessData.map((v) => v - mean).toList();
+
+    // تشخیص قله‌ها (محاسبه تعداد صعود و نزول‌های متوالی)
+    List<int> peaks = [];
+    for (int i = 1; i < normalized.length - 1; i++) {
+      if (normalized[i] > normalized[i - 1] && normalized[i] > normalized[i + 1]) {
+        peaks.add(i);
+      }
+    }
+
+    if (peaks.length < 2) return 0;
+
+    // محاسبه میانگین فاصله بین قله‌ها (بر حسب ثانیه)
+    double avgIntervalSeconds = 0;
+    int intervalsCount = 0;
+    for (int i = 1; i < peaks.length; i++) {
+      double interval = (peaks[i] - peaks[i - 1]) / fps; // فاصله بر حسب ثانیه
+      if (interval > 0.3 && interval < 2.0) { // محدوده معقول: ۳۰ تا ۲۰۰ ضربه در دقیقه
+        avgIntervalSeconds += interval;
+        intervalsCount++;
+      }
+    }
+
+    if (intervalsCount == 0) return 0;
+    avgIntervalSeconds /= intervalsCount;
+
+    // محاسبه ضربان در دقیقه
+    return (60 / avgIntervalSeconds).round();
   }
 
   @override
   void dispose() {
-    _detector.dispose();
+    _timer?.cancel();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -119,6 +250,18 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
+            const SizedBox(height: 20),
+            // نمایش تصویر دوربین (اختیاری)
+            _controller != null && _controller!.value.isInitialized
+                ? SizedBox(
+                    height: 200,
+                    width: 200,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(100),
+                      child: CameraPreview(_controller!),
+                    ),
+                  )
+                : const CircularProgressIndicator(),
             const SizedBox(height: 40),
             Text(
               '$_heartRate',
@@ -134,7 +277,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
             ),
             const SizedBox(height: 60),
             ElevatedButton.icon(
-              onPressed: _toggleMonitoring,
+              onPressed: _controller == null ? null : _toggleMonitoring,
               icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
               label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
               style: ElevatedButton.styleFrom(
