@@ -1,18 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:scppg/scppg.dart';
-import 'package:camera/camera.dart';
+import 'package:heart_rate/heart_rate.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // دریافت لیست دوربین‌های موجود (برای اطمینان از دسترسی)
-  final cameras = await availableCameras();
-  if (cameras.isEmpty) {
-    // اگر دوربین موجود نبود، خطا نشان بده
-    runApp(const ErrorApp());
-    return;
-  }
-
+void main() {
   runApp(const MyApp());
 }
 
@@ -25,133 +14,111 @@ class MyApp extends StatelessWidget {
       title: 'سینا - مشاور همراه',
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        fontFamily: 'Far_Homa', // استفاده از فونت دلخواه شما
+        fontFamily: 'Far_Homa',
       ),
-      home: const HeartRateMonitorScreen(),
+      home: const HomeScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-// صفحه نمایش خطا در صورت نبود دوربین
-class ErrorApp extends StatelessWidget {
-  const ErrorApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text('دوربین دستگاه در دسترس نیست!'),
-        ),
-      ),
-    );
-  }
-}
-
-class HeartRateMonitorScreen extends StatefulWidget {
-  const HeartRateMonitorScreen({super.key});
-
-  @override
-  State<HeartRateMonitorScreen> createState() => _HeartRateMonitorScreenState();
-}
-
-class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  final Scppg _scppg = Scppg();
-  int _heartRate = 0;
-  bool _isMonitoring = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _initScppg();
-  }
-
-  Future<void> _initScppg() async {
-    try {
-      await _scppg.initialize();
-      // گوش‌سپاری به جریان ضربان قلب
-      _scppg.heartRateStream.listen((hr) {
-        if (mounted) {
-          setState(() {
-            _heartRate = hr;
-          });
-        }
-      });
-    } catch (e) {
-      print('خطا در مقداردهی Scppg: $e');
-    }
-  }
-
-  void _startMonitoring() {
-    if (!_isMonitoring) {
-      _scppg.start();
-      setState(() {
-        _isMonitoring = true;
-      });
-    }
-  }
-
-  void _stopMonitoring() {
-    if (_isMonitoring) {
-      _scppg.stop();
-      setState(() {
-        _isMonitoring = false;
-        _heartRate = 0;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _scppg.dispose();
-    super.dispose();
-  }
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('اندازه‌گیری ضربان قلب'),
+        title: const Text('مشاور همراه سینا'),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.favorite,
+                size: 80,
+                color: Colors.red,
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'اندازه‌گیری ضربان قلب',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'برای شروع، دکمه زیر را بزنید و دوربین را به سمت صورت خود بگیرید.\nلطفاً در جای ثابت بنشینید و تا پایان اندازه‌گیری حرکت نکنید.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 40),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  // نمایش دیالوگ اندازه‌گیری ضربان قلب
+                  final int? heartRate = await HeartRateDialog.show(context);
+                  if (heartRate != null) {
+                    // پس از اتمام اندازه‌گیری، نتیجه را نمایش بده
+                    _showResultDialog(context, heartRate);
+                  } else {
+                    // کاربر انصراف داده یا خطایی رخ داده
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('اندازه‌گیری لغو شد.'),
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('شروع اندازه‌گیری'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 54),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // نمایش نتیجه ضربان قلب در یک دیالوگ
+  void _showResultDialog(BuildContext context, int heartRate) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('نتیجه اندازه‌گیری'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 40),
+            const Icon(Icons.favorite, color: Colors.red, size: 50),
+            const SizedBox(height: 10),
             Text(
-              '$_heartRate',
+              '$heartRate',
               style: const TextStyle(
-                fontSize: 72,
+                fontSize: 48,
                 fontWeight: FontWeight.bold,
                 color: Colors.blue,
               ),
             ),
             const Text(
               'ضربه در دقیقه (BPM)',
-              style: TextStyle(fontSize: 18, color: Colors.grey),
-            ),
-            const SizedBox(height: 60),
-            ElevatedButton.icon(
-              onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
-              icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
-              label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 54),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+              style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('بستن'),
+          ),
+        ],
       ),
     );
   }
