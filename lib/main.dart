@@ -1,7 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:heart_rate/heart_rate.dart';
+import 'package:flutter_ppg/flutter_ppg.dart';
+import 'package:camera/camera.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // بررسی دسترسی به دوربین
+  try {
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) {
+      runApp(const ErrorApp(message: 'دوربین در دسترس نیست!'));
+      return;
+    }
+  } catch (e) {
+    runApp(const ErrorApp(message: 'خطا در دسترسی به دوربین'));
+    return;
+  }
+
   runApp(const MyApp());
 }
 
@@ -16,105 +31,129 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue,
         fontFamily: 'Far_Homa',
       ),
-      home: const HomeScreen(),
+      home: const HeartRateMonitorScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class ErrorApp extends StatelessWidget {
+  final String message;
+  const ErrorApp({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Text(message, style: const TextStyle(fontSize: 18)),
+        ),
+      ),
+    );
+  }
+}
+
+class HeartRateMonitorScreen extends StatefulWidget {
+  const HeartRateMonitorScreen({super.key});
+
+  @override
+  State<HeartRateMonitorScreen> createState() =>
+      _HeartRateMonitorScreenState();
+}
+
+class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
+  final FlutterPPGService _ppgService = FlutterPPGService();
+  int _heartRate = 0;
+  bool _isMonitoring = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPPG();
+  }
+
+  Future<void> _initPPG() async {
+    try {
+      await _ppgService.initialize();
+      _ppgService.heartRateStream.listen((heartRate) {
+        if (mounted) {
+          setState(() {
+            _heartRate = heartRate;
+          });
+        }
+      });
+    } catch (e) {
+      print('خطا در مقداردهی PPG: $e');
+    }
+  }
+
+  void _startMonitoring() {
+    if (!_isMonitoring) {
+      _ppgService.start();
+      setState(() => _isMonitoring = true);
+    }
+  }
+
+  void _stopMonitoring() {
+    if (_isMonitoring) {
+      _ppgService.stop();
+      setState(() {
+        _isMonitoring = false;
+        _heartRate = 0;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ppgService.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('مشاور همراه سینا'),
+        title: const Text('اندازه‌گیری ضربان قلب'),
         centerTitle: true,
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.favorite,
-                size: 80,
-                color: Colors.red,
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'اندازه‌گیری ضربان قلب',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'برای شروع، دکمه زیر را بزنید و دوربین را به سمت صورت خود بگیرید.\nلطفاً در جای ثابت بنشینید و تا پایان اندازه‌گیری حرکت نکنید.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 40),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  final int? heartRate = await HeartRateDialog.show(context);
-                  if (heartRate != null) {
-                    _showResultDialog(context, heartRate);
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('اندازه‌گیری لغو شد.'),
-                        backgroundColor: Colors.orange,
-                      ),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('شروع اندازه‌گیری'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showResultDialog(BuildContext context, int heartRate) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('نتیجه اندازه‌گیری'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.favorite, color: Colors.red, size: 50),
-            const SizedBox(height: 10),
+            const Text(
+              'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
             Text(
-              '$heartRate',
+              '$_heartRate',
               style: const TextStyle(
-                fontSize: 48,
+                fontSize: 72,
                 fontWeight: FontWeight.bold,
                 color: Colors.blue,
               ),
             ),
             const Text(
               'ضربه در دقیقه (BPM)',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            const SizedBox(height: 60),
+            ElevatedButton.icon(
+              onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
+              icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
+              label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 54),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('بستن'),
-          ),
-        ],
       ),
     );
   }
