@@ -424,8 +424,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   void _sampleBrightness() {
     if (!_isMonitoring) return;
-    if (!_faceDetected) return;
 
+    // توجه: نمونه‌برداری دیگر به موفقیت تشخیص چهره وابسته نیست.
+    // اگر چهره شناسایی شود، ناحیه‌ی پیشانی برای دقت بهتر استفاده می‌شود (در _onCameraImage)
+    // ولی در نبود آن هم روی ناحیه‌ی مرکزی فریم اندازه‌گیری ادامه پیدا می‌کند.
     _brightnessHistory.add(_latestBrightness.toInt());
 
     if (_brightnessHistory.length > windowSize) {
@@ -655,21 +657,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
                 Column(
                   children: [
                     Icon(
-                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
-                      color: Colors.blue,
-                    ),
-                    const SizedBox(height: 4),
-                    Text('پلک راست: $_leftBlinkCount'),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Icon(
                       _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
                       color: Colors.blue,
                     ),
                     const SizedBox(height: 4),
                     Text('پلک چپ: $_rightBlinkCount'),
+                  ],
+                ),
+                Column(
+                  children: [
+                    Icon(
+                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
+                      color: Colors.blue,
+                    ),
+                    const SizedBox(height: 4),
+                    Text('پلک راست: $_leftBlinkCount'),
                   ],
                 ),
               ],
