@@ -606,21 +606,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
                 Column(
                   children: [
                     Icon(
-                      _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
+                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
                       color: Colors.blue,
                     ),
                     const SizedBox(height: 4),
-                    Text('پلک راست: $_rightBlinkCount'),
+                    Text('پلک راست: $_leftBlinkCount'),
                   ],
                 ),
                 Column(
                   children: [
                     Icon(
-                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
+                      _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
                       color: Colors.blue,
                     ),
                     const SizedBox(height: 4),
-                    Text('پلک چپ: $_leftBlinkCount'),
+                    Text('پلک چپ: $_rightBlinkCount'),
                   ],
                 ),
               ],
