@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_ppg/flutter_ppg.dart';
+import 'package:heart_rate/heart_rate.dart';
 import 'package:camera/camera.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // بررسی دسترسی به دوربین (اختیاری، ولی برای اطمینان)
+  // بررسی دسترسی به دوربین
   try {
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
@@ -66,45 +66,30 @@ class HeartRateMonitorScreen extends StatefulWidget {
 }
 
 class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  late final FlutterPPG _ppg;
+  late final HeartRateDetector _detector;
   int _heartRate = 0;
   bool _isMonitoring = false;
 
   @override
   void initState() {
     super.initState();
-    _ppg = FlutterPPG();
+    _detector = HeartRateDetector();
 
-    // گوش‌سپاری به جریان داده‌های ضربان قلب
-    _ppg.heartRateStream.listen((heartRate) {
+    // گوش‌سپاری به جریان ضربان قلب
+    _detector.heartRateStream.listen((heartRate) {
       if (mounted) {
         setState(() {
           _heartRate = heartRate;
         });
       }
     });
-
-    // مقداردهی اولیه (در صورت نیاز)
-    _initPpg();
-  }
-
-  Future<void> _initPpg() async {
-    try {
-      await _ppg.init();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطا در مقداردهی: $e')),
-        );
-      }
-    }
   }
 
   void _toggleMonitoring() {
     if (_isMonitoring) {
-      _ppg.stop();
+      _detector.stop();
     } else {
-      _ppg.start();
+      _detector.start();
     }
     setState(() {
       _isMonitoring = !_isMonitoring;
@@ -113,7 +98,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   @override
   void dispose() {
-    _ppg.dispose();
+    _detector.dispose();
     super.dispose();
   }
 
