@@ -84,15 +84,15 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   Timer? _timer;
   int _frameCount = 0;
 
-  // آخرین مقدار روشنایی محاسبه‌شده از فریم دوربین (توسط استریم تصویر به‌روزرسانی می‌شود)
   double _latestBrightness = 0;
   bool _isProcessingFrame = false;
   bool _isStreaming = false;
 
-  // تشخیص چهره
+  // تشخیص چهره + طبقه‌بندی (برای احتمال باز/بسته بودن چشم‌ها)
   late final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
       performanceMode: FaceDetectorMode.fast,
+      enableClassification: true,
       enableTracking: false,
     ),
   );
@@ -100,6 +100,14 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   Rect? _lastFaceRect;
   int _framesSinceFaceSeen = 0;
   bool _faceDetected = false;
+
+  // وضعیت و شمارش پلک زدن
+  bool _leftEyeOpen = true;
+  bool _rightEyeOpen = true;
+  int _leftBlinkCount = 0;
+  int _rightBlinkCount = 0;
+  static const double _eyeClosedThreshold = 0.3;
+  static const double _eyeOpenThreshold = 0.6;
 
   static const Map<DeviceOrientation, int> _orientations = {
     DeviceOrientation.portraitUp: 0,
@@ -110,7 +118,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   // تنظیمات الگوریتم
   static const int sampleRate = 30; // ۳۰ نمونه در ثانیه
-  static const int windowSize = 150; // ۵ ثانیه داده (برای دقت بهتر)
+  static const int windowSize = 240; // ۸ ثانیه داده (برای دقت بهتر در تشخیص فرکانس)
+  static const int recalcIntervalFrames = sampleRate * 3; // هر ۳ ثانیه یک‌بار محاسبه‌ی مجدد
 
   @override
   void initState() {
@@ -122,7 +131,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
-    // ترجیح با دوربین جلو؛ اگر پیدا نشد، اولین دوربین موجود استفاده می‌شود
     final frontCamera = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.front,
       orElse: () => cameras.first,
@@ -130,16 +138,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
     _controller = CameraController(
       frontCamera,
-      ResolutionPreset.low, // برای این کاربرد فقط میانگین روشنایی لازم است؛ رزولوشن پایین سریع‌تر است
+      ResolutionPreset.low,
       enableAudio: false,
-      // nv21/bgra8888 تنها فرمت‌هایی هستند که ML Kit روی هر پلتفرم می‌پذیرد
       imageFormatGroup:
           Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
     );
     await _controller!.initialize();
 
-    // قفل کردن اکسپوژر و فوکوس؛ در غیر این صورت تنظیم خودکار نور توسط دوربین
-    // سیگنال روشنایی را نویزی می‌کند و تشخیص ضربان را مختل می‌کند.
     try {
       await _controller!.setFocusMode(FocusMode.locked);
     } catch (_) {}
@@ -169,13 +174,16 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _lastFaceRect = null;
     _framesSinceFaceSeen = 0;
     _faceDetected = false;
+    _leftEyeOpen = true;
+    _rightEyeOpen = true;
+    _leftBlinkCount = 0;
+    _rightBlinkCount = 0;
 
     if (!_isStreaming) {
       await _controller!.startImageStream(_onCameraImage);
       _isStreaming = true;
     }
 
-    // نمونه‌برداری با نرخ ثابت از آخرین مقدار روشنایی محاسبه‌شده
     _timer = Timer.periodic(
       Duration(milliseconds: 1000 ~/ sampleRate),
       (timer) => _sampleBrightness(),
@@ -203,13 +211,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   void _onCameraImage(CameraImage image) {
     if (!_isMonitoring) return;
 
-    // تشخیص چهره سنگین‌تر است و async اجرا می‌شود؛ اگر فریم قبلی هنوز پردازش نشده رد می‌شود
     if (!_isDetectingFace) {
       _isDetectingFace = true;
       _detectFaceAndUpdateRoi(image);
     }
 
-    // محاسبه‌ی روشنایی روی ناحیه‌ی پیشانی (یا مرکز فریم در نبود چهره) - این کار سریع و سنکرون است
     if (!_isProcessingFrame) {
       _isProcessingFrame = true;
       try {
@@ -236,18 +242,19 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       final faces = await _faceDetector.processImage(inputImage);
 
       if (faces.isNotEmpty) {
-        // بزرگ‌ترین چهره‌ی شناسایی‌شده در تصویر انتخاب می‌شود
         faces.sort((a, b) =>
             (b.boundingBox.width * b.boundingBox.height)
                 .compareTo(a.boundingBox.width * a.boundingBox.height));
-        _lastFaceRect = faces.first.boundingBox;
+        final face = faces.first;
+        _lastFaceRect = face.boundingBox;
         _framesSinceFaceSeen = 0;
         if (!_faceDetected && mounted) {
           setState(() => _faceDetected = true);
         }
+
+        _updateBlinkState(face);
       } else {
         _framesSinceFaceSeen++;
-        // اگر حدود ۱ ثانیه چهره دیده نشد، ناحیه‌ی قبلی کنار گذاشته می‌شود
         if (_framesSinceFaceSeen > sampleRate) {
           _lastFaceRect = null;
           if (_faceDetected && mounted) {
@@ -262,7 +269,39 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
-  // ساخت InputImage برای ML Kit از فریم خام دوربین (طبق الگوی رسمی google_mlkit_commons)
+  // تشخیص کامل شدن یک پلک با فرضیه‌ی هیسترزیس (آستانه‌ی متفاوت برای بسته و باز شدن)
+  // تا نوسانات کوچک احتمال، به اشتباه چند پلک پشت‌سرهم ثبت نکنند
+  void _updateBlinkState(Face face) {
+    final leftProb = face.leftEyeOpenProbability;
+    final rightProb = face.rightEyeOpenProbability;
+
+    bool changed = false;
+
+    if (leftProb != null) {
+      if (_leftEyeOpen && leftProb < _eyeClosedThreshold) {
+        _leftEyeOpen = false;
+      } else if (!_leftEyeOpen && leftProb > _eyeOpenThreshold) {
+        _leftEyeOpen = true;
+        _leftBlinkCount++;
+        changed = true;
+      }
+    }
+
+    if (rightProb != null) {
+      if (_rightEyeOpen && rightProb < _eyeClosedThreshold) {
+        _rightEyeOpen = false;
+      } else if (!_rightEyeOpen && rightProb > _eyeOpenThreshold) {
+        _rightEyeOpen = true;
+        _rightBlinkCount++;
+        changed = true;
+      }
+    }
+
+    if (changed && mounted) {
+      setState(() {});
+    }
+  }
+
   InputImage? _inputImageFromCameraImage(CameraImage image) {
     final camera = _controller?.description;
     if (camera == null) return null;
@@ -316,7 +355,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     );
   }
 
-  // ناحیه‌ی پیشانی: بخش بالای کادر چهره، کمی پایین‌تر از خط مو و بالاتر از ابروها
   _Roi _foreheadRoiFromFace(Rect faceRect, int imageWidth, int imageHeight) {
     final faceWidth = faceRect.width;
     final faceHeight = faceRect.height;
@@ -329,7 +367,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return _Roi(left, top, width, height);
   }
 
-  // استخراج روشنایی مستقیم از صفحه‌ی Y (luminance) در فرمت nv21 اندروید - بدون نیاز به دیکد JPEG
   double _averageBrightnessYUV(CameraImage image, _Roi roi) {
     final plane = image.planes[0];
     final bytes = plane.bytes;
@@ -350,7 +387,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return count == 0 ? 0 : total / count;
   }
 
-  // استخراج روشنایی از فرمت BGRA8888 (iOS)
   double _averageBrightnessBGRA(CameraImage image, _Roi roi) {
     final plane = image.planes[0];
     final bytes = plane.bytes;
@@ -377,8 +413,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   void _sampleBrightness() {
     if (!_isMonitoring) return;
-
-    // اگر چهره شناسایی نشده، این نمونه را نادیده می‌گیریم تا سیگنال با نویز پس‌زمینه آلوده نشود
     if (!_faceDetected) return;
 
     _brightnessHistory.add(_latestBrightness.toInt());
@@ -389,12 +423,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
     _frameCount++;
 
-    if (_frameCount % (sampleRate * 5) == 0 &&
+    if (_frameCount % recalcIntervalFrames == 0 &&
         _brightnessHistory.length >= windowSize) {
       final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
 
-      // اگر سیگنال ضعیف بود و محاسبه نامعتبر شد (۰)، مقدار قبلی حفظ می‌شود
-      // به‌جای این‌که عدد روی صفحه یک‌دفعه صفر بشود
       if (computed > 0 && mounted) {
         setState(() {
           _heartRate = _heartRate == 0
@@ -405,30 +437,83 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
+  // میانگین متحرک محلی برای هر نمونه (پنجره‌ی متقارن) - برای حذف روند آهسته (نور محیط، لرزش دست)
+  List<double> _detrend(List<double> data, int halfWindow) {
+    final n = data.length;
+    final result = List<double>.filled(n, 0);
+    for (int i = 0; i < n; i++) {
+      final start = max(0, i - halfWindow);
+      final end = min(n, i + halfWindow + 1);
+      double sum = 0;
+      for (int j = start; j < end; j++) {
+        sum += data[j];
+      }
+      final localMean = sum / (end - start);
+      result[i] = data[i] - localMean;
+    }
+    return result;
+  }
+
+  // میانگین متحرک ساده برای حذف نویز ریز (لرزش پیکسل‌به‌پیکسل)
+  List<double> _smooth(List<double> data, int halfWindow) {
+    final n = data.length;
+    final result = List<double>.filled(n, 0);
+    for (int i = 0; i < n; i++) {
+      final start = max(0, i - halfWindow);
+      final end = min(n, i + halfWindow + 1);
+      double sum = 0;
+      for (int j = start; j < end; j++) {
+        sum += data[j];
+      }
+      result[i] = sum / (end - start);
+    }
+    return result;
+  }
+
+  double _standardDeviation(List<double> data) {
+    final mean = data.reduce((a, b) => a + b) / data.length;
+    final variance =
+        data.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) /
+            data.length;
+    return sqrt(variance);
+  }
+
   int _calculateHeartRate(List<int> brightnessData, int fps) {
-    // الگوریتم ساده: تشخیص قله‌ها در سیگنال (تغییرات روشنایی)
-    if (brightnessData.length < 10) return 0;
+    if (brightnessData.length < 30) return 0;
 
-    // نرمال‌سازی داده‌ها
-    double mean = brightnessData.reduce((a, b) => a + b) / brightnessData.length;
-    List<double> normalized = brightnessData.map((v) => v - mean).toList();
+    // مرحله ۱: هموارسازی سبک برای حذف نویز شات‌نویز پیکسل
+    final raw = brightnessData.map((v) => v.toDouble()).toList();
+    final smoothed = _smooth(raw, 1);
 
-    // تشخیص قله‌ها (محاسبه تعداد صعود و نزول‌های متوالی)
+    // مرحله ۲: حذف روند آهسته (baseline drift) با کم کردن میانگین متحرک محلی
+    // پنجره‌ی نیمه ~۱ ثانیه؛ فرکانس‌های زیر ~۰.۵ هرتز (۳۰ ضربه در دقیقه) حذف می‌شوند
+    final detrended = _detrend(smoothed, fps ~/ 2);
+
+    if (detrended.every((v) => v == 0)) return 0;
+
+    final stdDev = _standardDeviation(detrended);
+    if (stdDev == 0) return 0;
+
+    // آستانه‌ی برجستگی: قله باید حداقل این مقدار از صفر فاصله داشته باشد
+    // تا نویز کوچک به اشتباه به‌عنوان ضربان شمارش نشود
+    final prominenceThreshold = stdDev * 0.35;
+
     List<int> peaks = [];
-    for (int i = 1; i < normalized.length - 1; i++) {
-      if (normalized[i] > normalized[i - 1] && normalized[i] > normalized[i + 1]) {
+    for (int i = 1; i < detrended.length - 1; i++) {
+      if (detrended[i] > detrended[i - 1] &&
+          detrended[i] > detrended[i + 1] &&
+          detrended[i] > prominenceThreshold) {
         peaks.add(i);
       }
     }
 
     if (peaks.length < 2) return 0;
 
-    // محاسبه میانگین فاصله بین قله‌ها (بر حسب ثانیه)
     double avgIntervalSeconds = 0;
     int intervalsCount = 0;
     for (int i = 1; i < peaks.length; i++) {
-      double interval = (peaks[i] - peaks[i - 1]) / fps; // فاصله بر حسب ثانیه
-      if (interval > 0.3 && interval < 2.0) { // محدوده معقول: ۳۰ تا ۲۰۰ ضربه در دقیقه
+      double interval = (peaks[i] - peaks[i - 1]) / fps;
+      if (interval > 0.3 && interval < 2.0) {
         avgIntervalSeconds += interval;
         intervalsCount++;
       }
@@ -437,7 +522,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     if (intervalsCount == 0) return 0;
     avgIntervalSeconds /= intervalsCount;
 
-    // محاسبه ضربان در دقیقه
     return (60 / avgIntervalSeconds).round();
   }
 
@@ -470,7 +554,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
             const SizedBox(height: 20),
-            // نمایش تصویر دوربین (اختیاری)
             _controller != null && _controller!.value.isInitialized
                 ? Stack(
                     alignment: Alignment.bottomCenter,
@@ -502,7 +585,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
                     ],
                   )
                 : const CircularProgressIndicator(),
-            const SizedBox(height: 40),
+            const SizedBox(height: 24),
             Text(
               '$_heartRate',
               style: const TextStyle(
@@ -515,7 +598,34 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
               'ضربه در دقیقه (BPM)',
               style: TextStyle(fontSize: 18, color: Colors.grey),
             ),
-            const SizedBox(height: 60),
+            const SizedBox(height: 24),
+            // شمارنده‌ی پلک زدن هر چشم
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Column(
+                  children: [
+                    Icon(
+                      _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
+                      color: Colors.blue,
+                    ),
+                    const SizedBox(height: 4),
+                    Text('پلک راست: $_rightBlinkCount'),
+                  ],
+                ),
+                Column(
+                  children: [
+                    Icon(
+                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
+                      color: Colors.blue,
+                    ),
+                    const SizedBox(height: 4),
+                    Text('پلک چپ: $_leftBlinkCount'),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 36),
             ElevatedButton.icon(
               onPressed: _controller == null ? null : _toggleMonitoring,
               icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
