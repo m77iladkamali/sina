@@ -15,7 +15,7 @@ dependencies:
   flutter_custom_tabs: ^2.1.0
   flutter_inappwebview: ^6.1.6
   flutter_ppg: ^0.2.4
-  camera: ^0.10.5+7    # این نسخه با flutter_ppg کار می‌کند
+  camera: ^0.10.5+7
 
 dev_dependencies:
   flutter_test:
