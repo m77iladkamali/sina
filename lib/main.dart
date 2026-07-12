@@ -1,311 +1,89 @@
-import 'dart:async';
-
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_ppg/flutter_ppg.dart';
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
+class HeartRateMonitorScreen extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(useMaterial3: true, fontFamily: "Far_Homa"),
-      home: const WelcomePage(),
-    );
-  }
+  _HeartRateMonitorScreenState createState() => _HeartRateMonitorScreenState();
 }
 
-// ===== صفحه خوش‌آمدگویی (لوگو در وسط) =====
-class WelcomePage extends StatefulWidget {
-  const WelcomePage({super.key});
-
-  @override
-  State<WelcomePage> createState() => _WelcomePageState();
-}
-
-class _WelcomePageState extends State<WelcomePage>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _scale;
+class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
+  // نمونه‌گیری از سرویس اصلی پردازش سیگنال
+  final FlutterPPGService _ppgService = FlutterPPGService();
+  
+  int _heartRate = 0;
+  bool _isMonitoring = false;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    _scale = Tween<double>(begin: .9, end: 1).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack),
-    );
-    _animationController.forward();
+    _initPPG();
+  }
+
+  // ۱. مقداردهی اولیه الگوریتم (تنظیم نرخ نمونه‌برداری و کیفیت دوربین)
+  Future<void> _initPPG() async {
+    await _ppgService.initialize();
+    
+    // گوش‌سپاری به جریان داده‌های خروجی (خروجی بر حسب BPM)
+    _ppgService.heartRateStream.listen((heartRate) {
+      setState(() {
+        _heartRate = heartRate;
+      });
+    });
+  }
+
+  // ۲. شروع فرایند علمی (شروع دریافت فریم‌ها و اعمال فیلترهای سیگنال)
+  void _startMonitoring() {
+    if (!_isMonitoring) {
+      _ppgService.start();
+      setState(() => _isMonitoring = true);
+    }
+  }
+
+  // ۳. توقف و آزادسازی منابع
+  void _stopMonitoring() {
+    if (_isMonitoring) {
+      _ppgService.stop();
+      setState(() {
+        _isMonitoring = false;
+        _heartRate = 0;
+      });
+    }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _ppgService.dispose(); // آزادسازی حافظه و بستن دوربین
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xff1565C0), Color(0xff0D47A1)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 55),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "به بخش روان سنجی\n.خوش آمدید",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 30, color: Colors.white, height: 1.3),
-                ),
+      appBar: AppBar(title: Text('اندازه‌گیری ضربان قلب با rPPG')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '$_heartRate BPM',
+              style: TextStyle(fontSize: 56, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'لطفاً در جای ثابت بنشینید و دوربین را رو به صورت خود بگیرید',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 40),
+            ElevatedButton.icon(
+              onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
+              icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
+              label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
               ),
-              // ===== فضای کشسان برای وسط قرار گرفتن لوگو =====
-              Expanded(
-                flex: 1,
-                child: Center(
-                  child: ScaleTransition(
-                    scale: _scale,
-                    child: SizedBox(
-                      width: 300,
-                      height: 300,
-                      child: Image.asset("assets/images/sina.png", fit: BoxFit.contain),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 25),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "برای بهتر شدن خود را\n.بهتر بشناسید",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 24, color: Colors.white, height: 1.5),
-                ),
-              ),
-              const SizedBox(height: 25),
-              SizedBox(
-                width: 180,
-                height: 56,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff23C66F),
-                    foregroundColor: Colors.white,
-                    elevation: 8,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (_) => const BrowserPage()),
-                    );
-                  },
-                  child: const Text("ورود", style: TextStyle(fontSize: 22)),
-                ),
-              ),
-              const SizedBox(height: 30),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ===== مرورگر با InAppWebView (بدون تغییر) =====
-class BrowserPage extends StatefulWidget {
-  const BrowserPage({super.key});
-
-  @override
-  State<BrowserPage> createState() => _BrowserPageState();
-}
-
-class _BrowserPageState extends State<BrowserPage> {
-  DateTime? _lastBackPressed;
-  InAppWebViewController? controller;
-  double progress = 0;
-  bool hasInternet = true;
-  late final StreamSubscription<List<ConnectivityResult>> connectivitySubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkConnection();
-    connectivitySubscription =
-        Connectivity().onConnectivityChanged.listen((results) {
-      final connected = !results.contains(ConnectivityResult.none);
-      if (mounted) {
-        setState(() => hasInternet = connected);
-        if (connected) controller?.reload();
-      }
-    });
-  }
-
-  Future<void> _checkConnection() async {
-    final result = await Connectivity().checkConnectivity();
-    if (mounted) {
-      setState(() => hasInternet = !result.contains(ConnectivityResult.none));
-    }
-  }
-
-  @override
-  void dispose() {
-    connectivitySubscription.cancel();
-    super.dispose();
-  }
-
-  Future<bool> _onWillPop() async {
-    if (controller != null) {
-      final canGoBack = await controller!.canGoBack();
-      if (canGoBack) {
-        await controller!.goBack();
-        return false;
-      }
-    }
-
-    final now = DateTime.now();
-    if (_lastBackPressed == null ||
-        now.difference(_lastBackPressed!) > const Duration(seconds: 2)) {
-      _lastBackPressed = now;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            ".برای خروج، دوباره دکمه بازگشت را بزنید",
-            textAlign: TextAlign.center,
-          ),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return false;
-    }
-    return true;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _onWillPop,
-      child: Scaffold(
-        body: SafeArea(
-          child: Stack(
-            children: [
-              if (hasInternet)
-                InAppWebView(
-                  gestureRecognizers: {
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => EagerGestureRecognizer(),
-                    ),
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => TapGestureRecognizer()..onTap = () {},
-                    ),
-                  },
-                  initialUrlRequest: URLRequest(
-                    url: WebUri("https://www.sinapsycho.com/PsychometricAndroid/index"),
-                  ),
-                  initialSettings: InAppWebViewSettings(
-                    javaScriptEnabled: true,
-                    domStorageEnabled: true,
-                    databaseEnabled: true,
-                    cacheEnabled: true,
-                    supportZoom: false,
-                    allowsInlineMediaPlayback: true,
-                    mediaPlaybackRequiresUserGesture: false,
-                    thirdPartyCookiesEnabled: true,
-                    useHybridComposition: true,
-                    transparentBackground: false,
-                    disableContextMenu: true,
-                    supportMultipleWindows: false,
-                    javaScriptCanOpenWindowsAutomatically: true,
-                    useShouldOverrideUrlLoading: false,
-                  ),
-                  onWebViewCreated: (c) async {
-                    controller = c;
-                    await c.setSettings(
-                      settings: InAppWebViewSettings(
-                        userAgent:
-                            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
-                      ),
-                    );
-                  },
-                  onLoadStart: (controller, url) {
-                    if (!mounted) return;
-                    setState(() => progress = 0);
-                  },
-                  onProgressChanged: (controller, value) {
-                    if (!mounted) return;
-                    setState(() => progress = value / 100);
-                  },
-                  onLoadStop: (controller, url) async {
-                    await controller.evaluateJavascript(source: """
-                      document.querySelectorAll('a,button').forEach(function(e){
-                        if(e.innerText.trim().includes('بازگشت')){
-                          e.onclick = function(event){
-                            event.preventDefault();
-                            window.location.href='https://www.sinapsycho.com/Consult/index';
-                          }
-                        }
-                      });
-                    """);
-                    if (!mounted) return;
-                    setState(() => progress = 1);
-                  },
-                  onConsoleMessage: (controller, consoleMessage) {
-                    debugPrint(consoleMessage.message);
-                  },
-                ),
-              if (!hasInternet)
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 25),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.wifi_off_rounded, size: 90, color: Colors.red),
-                        const SizedBox(height: 25),
-                        const Text("اتصال اینترنت برقرار نیست", style: TextStyle(fontSize: 28)),
-                        const SizedBox(height: 15),
-                        const Text("لطفاً اتصال اینترنت خود را بررسی کنید.", style: TextStyle(fontSize: 20)),
-                        const SizedBox(height: 35),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            await _checkConnection();
-                            if (hasInternet) controller?.reload();
-                          },
-                          icon: const Icon(Icons.refresh),
-                          label: const Text("تلاش مجدد"),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (progress < 1 && hasInternet)
-                LinearProgressIndicator(value: progress, minHeight: 3),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
