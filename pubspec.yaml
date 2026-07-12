@@ -14,7 +14,7 @@ dependencies:
   webview_flutter: ^4.13.1
   flutter_custom_tabs: ^2.1.0
   flutter_inappwebview: ^6.1.5
-  flutter_ppg: 0.1.0          # تغییر به نسخه سازگار با SDK شما
+  scppg: ^0.1.0   # یا ^0.0.1
   camera: ^0.10.5+7
 
 dev_dependencies:
