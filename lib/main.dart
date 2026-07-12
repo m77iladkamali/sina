@@ -145,18 +145,18 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       int centerY = decoded.height ~/ 2;
       int radius = min(decoded.width, decoded.height) ~/ 4;
 
-      int totalBrightness = 0;
+      double totalBrightness = 0;
       int pixelCount = 0;
 
       for (int y = centerY - radius; y < centerY + radius; y++) {
         for (int x = centerX - radius; x < centerX + radius; x++) {
           if (x >= 0 && x < decoded.width && y >= 0 && y < decoded.height) {
             final pixel = decoded.getPixel(x, y);
-            // تبدیل به روشنایی (Luminance)
-            final r = img.getRed(pixel);
-            final g = img.getGreen(pixel);
-            final b = img.getBlue(pixel);
-            final brightness = (0.299 * r + 0.587 * g + 0.114 * b).toInt();
+            // در نسخه ۴ پکیج image، pixel.r/g/b مستقیماً در دسترسن (به‌جای getRed/getGreen/getBlue)
+            final r = pixel.r;
+            final g = pixel.g;
+            final b = pixel.b;
+            final brightness = 0.299 * r + 0.587 * g + 0.114 * b;
             totalBrightness += brightness;
             pixelCount++;
           }
@@ -165,7 +165,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
       if (pixelCount == 0) return;
 
-      final avgBrightness = totalBrightness ~/ pixelCount;
+      final avgBrightness = (totalBrightness / pixelCount).toInt();
       _brightnessHistory.add(avgBrightness);
 
       // نگه‌داشتن فقط پنجره زمانی مشخص
