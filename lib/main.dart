@@ -57,13 +57,10 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 40),
               ElevatedButton.icon(
                 onPressed: () async {
-                  // نمایش دیالوگ اندازه‌گیری ضربان قلب
                   final int? heartRate = await HeartRateDialog.show(context);
                   if (heartRate != null) {
-                    // پس از اتمام اندازه‌گیری، نتیجه را نمایش بده
                     _showResultDialog(context, heartRate);
                   } else {
-                    // کاربر انصراف داده یا خطایی رخ داده
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('اندازه‌گیری لغو شد.'),
@@ -88,7 +85,6 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // نمایش نتیجه ضربان قلب در یک دیالوگ
   void _showResultDialog(BuildContext context, int heartRate) {
     showDialog(
       context: context,
