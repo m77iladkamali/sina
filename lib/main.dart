@@ -1,8 +1,8 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:image/image.dart' as img;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,8 +72,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   Timer? _timer;
   int _frameCount = 0;
 
+  // آخرین مقدار روشنایی محاسبه‌شده از فریم دوربین (توسط استریم تصویر به‌روزرسانی می‌شود)
+  double _latestBrightness = 0;
+  bool _isProcessingFrame = false;
+  bool _isStreaming = false;
+
   // تنظیمات الگوریتم
-  static const int sampleRate = 30; // ۳۰ فریم در ثانیه
+  static const int sampleRate = 30; // ۳۰ نمونه در ثانیه
   static const int windowSize = 150; // ۵ ثانیه داده (برای دقت بهتر)
 
   @override
@@ -86,11 +91,34 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     final cameras = await availableCameras();
     if (cameras.isEmpty) return;
 
+    // ترجیح با دوربین جلو؛ اگر پیدا نشد، اولین دوربین موجود استفاده می‌شود
+    final frontCamera = cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.front,
+      orElse: () => cameras.first,
+    );
+
     _controller = CameraController(
-      cameras[0],
-      ResolutionPreset.medium,
+      frontCamera,
+      ResolutionPreset.low, // برای این کاربرد فقط میانگین روشنایی لازم است؛ رزولوشن پایین سریع‌تر است
+      enableAudio: false,
+      imageFormatGroup:
+          Platform.isAndroid ? ImageFormatGroup.yuv420 : ImageFormatGroup.bgra8888,
     );
     await _controller!.initialize();
+
+    // قفل کردن اکسپوژر و فوکوس؛ در غیر این صورت تنظیم خودکار نور توسط دوربین
+    // سیگنال روشنایی را نویزی می‌کند و تشخیص ضربان را مختل می‌کند.
+    try {
+      await _controller!.setFocusMode(FocusMode.locked);
+    } catch (_) {
+      // برخی دستگاه‌ها این حالت را پشتیبانی نمی‌کنند
+    }
+    try {
+      await _controller!.setExposureMode(ExposureMode.locked);
+    } catch (_) {
+      // برخی دستگاه‌ها این حالت را پشتیبانی نمی‌کنند
+    }
+
     if (mounted) setState(() {});
   }
 
@@ -102,91 +130,141 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
-  void _startMonitoring() {
+  Future<void> _startMonitoring() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
 
     _isMonitoring = true;
     _brightnessHistory.clear();
     _heartRate = 0;
     _frameCount = 0;
+    _latestBrightness = 0;
 
-    // شروع تحلیل فریم‌ها
+    // شروع دریافت فریم‌های خام دوربین (بدون ذخیره فایل، مستقیم در حافظه)
+    if (!_isStreaming) {
+      await _controller!.startImageStream(_onCameraImage);
+      _isStreaming = true;
+    }
+
+    // نمونه‌برداری با نرخ ثابت از آخرین مقدار روشنایی محاسبه‌شده
+    // (این کار نرخ ذخیره‌ی داده را از نرخ متغیر فریم دوربین جدا می‌کند)
     _timer = Timer.periodic(
       Duration(milliseconds: 1000 ~/ sampleRate),
-      (timer) async {
-        if (!_isMonitoring) return;
-        await _captureAndAnalyzeFrame();
-      },
+      (timer) => _sampleBrightness(),
     );
 
     setState(() {});
   }
 
-  void _stopMonitoring() {
+  Future<void> _stopMonitoring() async {
     _isMonitoring = false;
     _timer?.cancel();
     _timer = null;
     _heartRate = 0;
+
+    if (_isStreaming && _controller != null) {
+      try {
+        await _controller!.stopImageStream();
+      } catch (_) {}
+      _isStreaming = false;
+    }
+
     setState(() {});
   }
 
-  Future<void> _captureAndAnalyzeFrame() async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
+  void _onCameraImage(CameraImage image) {
+    if (!_isMonitoring || _isProcessingFrame) return;
+    _isProcessingFrame = true;
 
     try {
-      final image = await _controller!.takePicture();
-      final bytes = await image.readAsBytes();
-      final img.Image? decoded = img.decodeImage(bytes);
+      final centerX = image.width ~/ 2;
+      final centerY = image.height ~/ 2;
+      final radius = min(image.width, image.height) ~/ 4;
 
-      if (decoded == null) return;
+      final brightness = Platform.isAndroid
+          ? _averageBrightnessYUV(image, centerX, centerY, radius)
+          : _averageBrightnessBGRA(image, centerX, centerY, radius);
 
-      // محاسبه میانگین روشنایی در ناحیه مرکزی (چهره)
-      int centerX = decoded.width ~/ 2;
-      int centerY = decoded.height ~/ 2;
-      int radius = min(decoded.width, decoded.height) ~/ 4;
-
-      double totalBrightness = 0;
-      int pixelCount = 0;
-
-      for (int y = centerY - radius; y < centerY + radius; y++) {
-        for (int x = centerX - radius; x < centerX + radius; x++) {
-          if (x >= 0 && x < decoded.width && y >= 0 && y < decoded.height) {
-            final pixel = decoded.getPixel(x, y);
-            // در نسخه ۴ پکیج image، pixel.r/g/b مستقیماً در دسترسن (به‌جای getRed/getGreen/getBlue)
-            final r = pixel.r;
-            final g = pixel.g;
-            final b = pixel.b;
-            final brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-            totalBrightness += brightness;
-            pixelCount++;
-          }
-        }
-      }
-
-      if (pixelCount == 0) return;
-
-      final avgBrightness = (totalBrightness / pixelCount).toInt();
-      _brightnessHistory.add(avgBrightness);
-
-      // نگه‌داشتن فقط پنجره زمانی مشخص
-      if (_brightnessHistory.length > windowSize) {
-        _brightnessHistory.removeAt(0);
-      }
-
-      _frameCount++;
-
-      // هر ۵ ثانیه یک بار محاسبه (زمانی که داده کافی داریم)
-      if (_frameCount % (sampleRate * 5) == 0 &&
-          _brightnessHistory.length >= windowSize) {
-        final heartRate = _calculateHeartRate(_brightnessHistory, sampleRate);
-        if (mounted) {
-          setState(() {
-            _heartRate = heartRate;
-          });
-        }
-      }
+      _latestBrightness = brightness;
     } catch (e) {
       print('خطا در پردازش فریم: $e');
+    } finally {
+      _isProcessingFrame = false;
+    }
+  }
+
+  // استخراج روشنایی مستقیم از صفحه Y (luminance) در فرمت YUV420 اندروید - بدون نیاز به دیکد JPEG
+  double _averageBrightnessYUV(
+      CameraImage image, int centerX, int centerY, int radius) {
+    final plane = image.planes[0];
+    final bytes = plane.bytes;
+    final bytesPerRow = plane.bytesPerRow;
+
+    final xStart = (centerX - radius).clamp(0, image.width - 1);
+    final xEnd = (centerX + radius).clamp(0, image.width - 1);
+    final yStart = (centerY - radius).clamp(0, image.height - 1);
+    final yEnd = (centerY + radius).clamp(0, image.height - 1);
+
+    double total = 0;
+    int count = 0;
+    for (int y = yStart; y < yEnd; y++) {
+      final rowOffset = y * bytesPerRow;
+      for (int x = xStart; x < xEnd; x++) {
+        total += bytes[rowOffset + x];
+        count++;
+      }
+    }
+    return count == 0 ? 0 : total / count;
+  }
+
+  // استخراج روشنایی از فرمت BGRA8888 (iOS)
+  double _averageBrightnessBGRA(
+      CameraImage image, int centerX, int centerY, int radius) {
+    final plane = image.planes[0];
+    final bytes = plane.bytes;
+    final bytesPerRow = plane.bytesPerRow;
+
+    final xStart = (centerX - radius).clamp(0, image.width - 1);
+    final xEnd = (centerX + radius).clamp(0, image.width - 1);
+    final yStart = (centerY - radius).clamp(0, image.height - 1);
+    final yEnd = (centerY + radius).clamp(0, image.height - 1);
+
+    double total = 0;
+    int count = 0;
+    for (int y = yStart; y < yEnd; y++) {
+      final rowOffset = y * bytesPerRow;
+      for (int x = xStart; x < xEnd; x++) {
+        final pixelOffset = rowOffset + x * 4;
+        final b = bytes[pixelOffset];
+        final g = bytes[pixelOffset + 1];
+        final r = bytes[pixelOffset + 2];
+        total += 0.299 * r + 0.587 * g + 0.114 * b;
+        count++;
+      }
+    }
+    return count == 0 ? 0 : total / count;
+  }
+
+  void _sampleBrightness() {
+    if (!_isMonitoring) return;
+
+    _brightnessHistory.add(_latestBrightness.toInt());
+
+    // نگه‌داشتن فقط پنجره زمانی مشخص
+    if (_brightnessHistory.length > windowSize) {
+      _brightnessHistory.removeAt(0);
+    }
+
+    _frameCount++;
+
+    // هر ۵ ثانیه یک بار محاسبه (زمانی که داده کافی داریم)
+    if (_frameCount % (sampleRate * 5) == 0 &&
+        _brightnessHistory.length >= windowSize) {
+      final heartRate = _calculateHeartRate(_brightnessHistory, sampleRate);
+      if (mounted) {
+        setState(() {
+          _heartRate = heartRate;
+        });
+      }
     }
   }
 
@@ -229,6 +307,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    if (_isStreaming) {
+      _controller?.stopImageStream();
+    }
     _controller?.dispose();
     super.dispose();
   }
