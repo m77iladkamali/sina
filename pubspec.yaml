@@ -14,8 +14,8 @@ dependencies:
   webview_flutter: ^4.13.1
   flutter_custom_tabs: ^2.1.0
   flutter_inappwebview: ^6.1.6
-  scppg: ^1.2.1
-  camera: ^0.11.4
+  heart_rate: ^0.0.1+1      # ← جایگزین scppg
+  camera: ^0.10.5+7         # ← بدون تغییر (همان نسخه قدیمی)
 
 dev_dependencies:
   flutter_test:
