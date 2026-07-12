@@ -13,9 +13,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   webview_flutter: ^4.13.1
   flutter_custom_tabs: ^2.1.0
-  flutter_inappwebview: ^6.1.5
+  flutter_inappwebview: ^6.1.6
   scppg: ^1.2.1
-  camera: ^0.10.5+7
+  camera: ^0.11.4
 
 dev_dependencies:
   flutter_test:
