@@ -5,7 +5,7 @@ import 'package:camera/camera.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // بررسی دسترسی به دوربین
+  // بررسی دسترسی به دوربین (اختیاری، ولی برای اطمینان)
   try {
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
@@ -13,7 +13,7 @@ void main() async {
       return;
     }
   } catch (e) {
-    runApp(const ErrorApp(message: 'خطا در دسترسی به دوربین'));
+    runApp(ErrorApp(message: 'خطا در دسترسی به دوربین: $e'));
     return;
   }
 
@@ -46,7 +46,11 @@ class ErrorApp extends StatelessWidget {
     return MaterialApp(
       home: Scaffold(
         body: Center(
-          child: Text(message, style: const TextStyle(fontSize: 18)),
+          child: Text(
+            message,
+            style: const TextStyle(fontSize: 18, color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
         ),
       ),
     );
@@ -62,51 +66,54 @@ class HeartRateMonitorScreen extends StatefulWidget {
 }
 
 class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  final FlutterPPGService _ppgService = FlutterPPGService();
+  late final FlutterPPG _ppg;
   int _heartRate = 0;
   bool _isMonitoring = false;
 
   @override
   void initState() {
     super.initState();
-    _initPPG();
+    _ppg = FlutterPPG();
+
+    // گوش‌سپاری به جریان داده‌های ضربان قلب
+    _ppg.heartRateStream.listen((heartRate) {
+      if (mounted) {
+        setState(() {
+          _heartRate = heartRate;
+        });
+      }
+    });
+
+    // مقداردهی اولیه (در صورت نیاز)
+    _initPpg();
   }
 
-  Future<void> _initPPG() async {
+  Future<void> _initPpg() async {
     try {
-      await _ppgService.initialize();
-      _ppgService.heartRateStream.listen((heartRate) {
-        if (mounted) {
-          setState(() {
-            _heartRate = heartRate;
-          });
-        }
-      });
+      await _ppg.init();
     } catch (e) {
-      print('خطا در مقداردهی PPG: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطا در مقداردهی: $e')),
+        );
+      }
     }
   }
 
-  void _startMonitoring() {
-    if (!_isMonitoring) {
-      _ppgService.start();
-      setState(() => _isMonitoring = true);
-    }
-  }
-
-  void _stopMonitoring() {
+  void _toggleMonitoring() {
     if (_isMonitoring) {
-      _ppgService.stop();
-      setState(() {
-        _isMonitoring = false;
-        _heartRate = 0;
-      });
+      _ppg.stop();
+    } else {
+      _ppg.start();
     }
+    setState(() {
+      _isMonitoring = !_isMonitoring;
+    });
   }
 
   @override
   void dispose() {
-    _ppgService.dispose();
+    _ppg.dispose();
     super.dispose();
   }
 
@@ -142,7 +149,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
             ),
             const SizedBox(height: 60),
             ElevatedButton.icon(
-              onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
+              onPressed: _toggleMonitoring,
               icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
               label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
               style: ElevatedButton.styleFrom(
