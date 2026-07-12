@@ -1,48 +1,100 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_ppg/flutter_ppg.dart';
+import 'package:scppg/scppg.dart';
+import 'package:camera/camera.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // دریافت لیست دوربین‌های موجود (برای اطمینان از دسترسی)
+  final cameras = await availableCameras();
+  if (cameras.isEmpty) {
+    // اگر دوربین موجود نبود، خطا نشان بده
+    runApp(const ErrorApp());
+    return;
+  }
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'سینا - مشاور همراه',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        fontFamily: 'Far_Homa', // استفاده از فونت دلخواه شما
+      ),
+      home: const HeartRateMonitorScreen(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+// صفحه نمایش خطا در صورت نبود دوربین
+class ErrorApp extends StatelessWidget {
+  const ErrorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Text('دوربین دستگاه در دسترس نیست!'),
+        ),
+      ),
+    );
+  }
+}
 
 class HeartRateMonitorScreen extends StatefulWidget {
+  const HeartRateMonitorScreen({super.key});
+
   @override
-  _HeartRateMonitorScreenState createState() => _HeartRateMonitorScreenState();
+  State<HeartRateMonitorScreen> createState() => _HeartRateMonitorScreenState();
 }
 
 class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  // نمونه‌گیری از سرویس اصلی پردازش سیگنال
-  final FlutterPPGService _ppgService = FlutterPPGService();
-  
+  final Scppg _scppg = Scppg();
   int _heartRate = 0;
   bool _isMonitoring = false;
 
   @override
   void initState() {
     super.initState();
-    _initPPG();
+    _initScppg();
   }
 
-  // ۱. مقداردهی اولیه الگوریتم (تنظیم نرخ نمونه‌برداری و کیفیت دوربین)
-  Future<void> _initPPG() async {
-    await _ppgService.initialize();
-    
-    // گوش‌سپاری به جریان داده‌های خروجی (خروجی بر حسب BPM)
-    _ppgService.heartRateStream.listen((heartRate) {
-      setState(() {
-        _heartRate = heartRate;
+  Future<void> _initScppg() async {
+    try {
+      await _scppg.initialize();
+      // گوش‌سپاری به جریان ضربان قلب
+      _scppg.heartRateStream.listen((hr) {
+        if (mounted) {
+          setState(() {
+            _heartRate = hr;
+          });
+        }
       });
-    });
-  }
-
-  // ۲. شروع فرایند علمی (شروع دریافت فریم‌ها و اعمال فیلترهای سیگنال)
-  void _startMonitoring() {
-    if (!_isMonitoring) {
-      _ppgService.start();
-      setState(() => _isMonitoring = true);
+    } catch (e) {
+      print('خطا در مقداردهی Scppg: $e');
     }
   }
 
-  // ۳. توقف و آزادسازی منابع
+  void _startMonitoring() {
+    if (!_isMonitoring) {
+      _scppg.start();
+      setState(() {
+        _isMonitoring = true;
+      });
+    }
+  }
+
   void _stopMonitoring() {
     if (_isMonitoring) {
-      _ppgService.stop();
+      _scppg.stop();
       setState(() {
         _isMonitoring = false;
         _heartRate = 0;
@@ -52,35 +104,50 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   @override
   void dispose() {
-    _ppgService.dispose(); // آزادسازی حافظه و بستن دوربین
+    _scppg.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('اندازه‌گیری ضربان قلب با rPPG')),
-      body: Center(
+      appBar: AppBar(
+        title: const Text('اندازه‌گیری ضربان قلب'),
+        centerTitle: true,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              '$_heartRate BPM',
-              style: TextStyle(fontSize: 56, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 20),
-            Text(
-              'لطفاً در جای ثابت بنشینید و دوربین را رو به صورت خود بگیرید',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            const Text(
+              'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
               textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
-            SizedBox(height: 40),
+            const SizedBox(height: 40),
+            Text(
+              '$_heartRate',
+              style: const TextStyle(
+                fontSize: 72,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue,
+              ),
+            ),
+            const Text(
+              'ضربه در دقیقه (BPM)',
+              style: TextStyle(fontSize: 18, color: Colors.grey),
+            ),
+            const SizedBox(height: 60),
             ElevatedButton.icon(
               onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
               icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
               label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
               style: ElevatedButton.styleFrom(
-                padding: EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                minimumSize: const Size(double.infinity, 54),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ],
