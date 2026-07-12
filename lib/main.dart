@@ -109,6 +109,14 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   static const double _eyeClosedThreshold = 0.3;
   static const double _eyeOpenThreshold = 0.6;
 
+  // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
+  static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
+  static const int _waveformShortWindow = 30; // ~۱ ثانیه، برای محاسبه‌ی میانگین کوتاه‌مدت
+  final List<double> _waveformBuffer = List<double>.filled(waveformLength, 0);
+  final List<double> _recentRawSamples = [];
+  final ValueNotifier<List<double>> _waveformNotifier =
+      ValueNotifier<List<double>>(List<double>.filled(waveformLength, 0));
+
   static const Map<DeviceOrientation, int> _orientations = {
     DeviceOrientation.portraitUp: 0,
     DeviceOrientation.landscapeLeft: 90,
@@ -178,6 +186,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _rightEyeOpen = true;
     _leftBlinkCount = 0;
     _rightBlinkCount = 0;
+    _recentRawSamples.clear();
+    _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
+    _waveformNotifier.value = List<double>.from(_waveformBuffer);
 
     if (!_isStreaming) {
       await _controller!.startImageStream(_onCameraImage);
@@ -421,6 +432,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _brightnessHistory.removeAt(0);
     }
 
+    _updateWaveform(_latestBrightness);
+
     _frameCount++;
 
     if (_frameCount % recalcIntervalFrames == 0 &&
@@ -478,6 +491,22 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return sqrt(variance);
   }
 
+  // نسخه‌ی AC-coupled سیگنال برای نمایش زنده: از مقدار خام، میانگین کوتاه‌مدت اخیر کم می‌شود
+  // تا موج به‌جای یک عدد ثابت با افت‌وخیز آهسته، حول محور صفر نوسان کند (شبیه موج پالس واقعی)
+  void _updateWaveform(double value) {
+    _recentRawSamples.add(value);
+    if (_recentRawSamples.length > _waveformShortWindow) {
+      _recentRawSamples.removeAt(0);
+    }
+    final localMean =
+        _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
+    final acValue = value - localMean;
+
+    _waveformBuffer.removeAt(0);
+    _waveformBuffer.add(acValue);
+    _waveformNotifier.value = List<double>.from(_waveformBuffer);
+  }
+
   int _calculateHeartRate(List<int> brightnessData, int fps) {
     if (brightnessData.length < 30) return 0;
 
@@ -533,6 +562,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     _controller?.dispose();
     _faceDetector.close();
+    _waveformNotifier.dispose();
     super.dispose();
   }
 
@@ -598,6 +628,25 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
               'ضربه در دقیقه (BPM)',
               style: TextStyle(fontSize: 18, color: Colors.grey),
             ),
+            const SizedBox(height: 16),
+            // نمایش زنده‌ی موج ضربان
+            Container(
+              height: 70,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ValueListenableBuilder<List<double>>(
+                valueListenable: _waveformNotifier,
+                builder: (context, data, _) {
+                  return CustomPaint(
+                    size: const Size(double.infinity, 70),
+                    painter: _WaveformPainter(data),
+                  );
+                },
+              ),
+            ),
             const SizedBox(height: 24),
             // شمارنده‌ی پلک زدن هر چشم
             Row(
@@ -642,4 +691,56 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       ),
     );
   }
+}
+
+// رسم موج زنده‌ی ضربان روی یک سطح تیره، شبیه مانیتورهای PPG
+class _WaveformPainter extends CustomPainter {
+  final List<double> data;
+  const _WaveformPainter(this.data);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // خط پایه‌ی وسط
+    final basePaint = Paint()
+      ..color = Colors.white24
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(0, size.height / 2),
+      Offset(size.width, size.height / 2),
+      basePaint,
+    );
+
+    if (data.length < 2) return;
+
+    // مقیاس‌بندی خودکار بر اساس بزرگ‌ترین دامنه‌ی فعلی موج، تا موج همیشه در کادر جا شود
+    double maxAbs = 0;
+    for (final v in data) {
+      final a = v.abs();
+      if (a > maxAbs) maxAbs = a;
+    }
+    final scale = maxAbs < 0.5 ? 1.0 : (size.height / 2 - 6) / maxAbs;
+
+    final wavePaint = Paint()
+      ..color = Colors.redAccent
+      ..strokeWidth = 2.2
+      ..style = PaintingStyle.stroke
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+
+    final path = Path();
+    final dx = size.width / (data.length - 1);
+    for (int i = 0; i < data.length; i++) {
+      final x = i * dx;
+      final y = size.height / 2 - data[i] * scale;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(path, wavePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _WaveformPainter oldDelegate) => true;
 }
