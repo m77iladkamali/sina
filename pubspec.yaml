@@ -14,7 +14,8 @@ dependencies:
   webview_flutter: ^4.13.1
   flutter_custom_tabs: ^2.1.0
   flutter_inappwebview: ^6.1.5
-
+  flutter_ppg: ^0.2.4
+  camera: ^0.10.5+7  # وابستگی مورد نیاز برای دسترسی به دوربین
 dev_dependencies:
   flutter_test:
     sdk: flutter
