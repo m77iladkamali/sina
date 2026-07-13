@@ -88,7 +88,14 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   bool _isProcessingFrame = false;
   bool _isStreaming = false;
 
+  // وضعیت راه‌اندازی دوربین
+  String? _initError;
+  ImageFormatGroup? _activeImageFormat;
+
   // تشخیص چهره + طبقه‌بندی (برای احتمال باز/بسته بودن چشم‌ها)
+  // توجه: این ویژگی کاملاً اختیاری است؛ اگر فرمت تصویر با آن سازگار نباشد
+  // (مثلاً روی فرمت پشتیبان yuv420)، بی‌سروصدا غیرفعال می‌ماند و
+  // اندازه‌گیری ضربان قلب و موج بدون آن هم کار می‌کنند.
   late final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
       performanceMode: FaceDetectorMode.fast,
@@ -140,35 +147,85 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _initCamera();
   }
 
+  // راه‌اندازی دوربین با افت خودکار (fallback) بین فرمت‌های تصویر:
+  // ابتدا فرمت سازگار با تشخیص چهره امتحان می‌شود؛ اگر دستگاه آن را پشتیبانی نکند
+  // (initialize شکست بخورد)، به فرمت پایه‌ای‌تر که مطمئناً کار می‌کند برمی‌گردیم.
+  // در هر دو حالت، اندازه‌گیری ضربان قلب و موج کار می‌کند - فقط تشخیص چهره ممکن است غیرفعال شود.
   Future<void> _initCamera() async {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
+    setState(() {
+      _initError = null;
+    });
+
+    List<CameraDescription> cameras;
+    try {
+      cameras = await availableCameras();
+    } catch (e) {
+      if (mounted) setState(() => _initError = 'خطا در دسترسی به دوربین‌ها: $e');
+      return;
+    }
+
+    if (cameras.isEmpty) {
+      if (mounted) setState(() => _initError = 'هیچ دوربینی پیدا نشد');
+      return;
+    }
 
     final frontCamera = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.front,
       orElse: () => cameras.first,
     );
 
-    _controller = CameraController(
-      frontCamera,
-      ResolutionPreset.low,
-      enableAudio: false,
-      imageFormatGroup:
-          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
-    );
-    await _controller!.initialize();
+    final formatsToTry = Platform.isAndroid
+        ? [ImageFormatGroup.nv21, ImageFormatGroup.yuv420]
+        : [ImageFormatGroup.bgra8888];
 
-    try {
-      await _controller!.setFocusMode(FocusMode.locked);
-    } catch (_) {}
-    try {
-      await _controller!.setExposureMode(ExposureMode.locked);
-    } catch (_) {}
+    Object? lastError;
+    for (final format in formatsToTry) {
+      try {
+        final controller = CameraController(
+          frontCamera,
+          ResolutionPreset.low,
+          enableAudio: false,
+          imageFormatGroup: format,
+        );
+        await controller.initialize();
 
-    if (mounted) setState(() {});
+        try {
+          await controller.setFocusMode(FocusMode.locked);
+        } catch (_) {}
+        try {
+          await controller.setExposureMode(ExposureMode.locked);
+        } catch (_) {}
+
+        _controller = controller;
+        _activeImageFormat = format;
+
+        if (mounted) {
+          setState(() {
+            _initError = null;
+          });
+        }
+        return; // موفق شد - از تابع خارج می‌شویم
+      } catch (e) {
+        lastError = e;
+        print('خطا در راه‌اندازی دوربین با فرمت $format: $e');
+      }
+    }
+
+    // اگر همه‌ی فرمت‌های ممکن شکست خوردند
+    if (mounted) {
+      setState(() {
+        _initError = 'راه‌اندازی دوربین ناموفق بود.\n$lastError';
+      });
+    }
   }
 
   void _toggleMonitoring() {
+    if (_controller == null || !_controller!.value.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('دوربین هنوز آماده نیست، چند لحظه صبر کنید')),
+      );
+      return;
+    }
     if (_isMonitoring) {
       _stopMonitoring();
     } else {
@@ -179,40 +236,47 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   Future<void> _startMonitoring() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
 
-    _isMonitoring = true;
-    _brightnessHistory.clear();
-    _heartRate = 0;
-    _frameCount = 0;
-    _latestBrightness = 0;
-    _lastFaceRect = null;
-    _framesSinceFaceSeen = 0;
-    _faceDetected = false;
-    _leftEyeOpen = true;
-    _rightEyeOpen = true;
-    _leftBlinkCount = 0;
-    _rightBlinkCount = 0;
-    _recentRawSamples.clear();
-    _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
-    _waveformNotifier.value = List<double>.from(_waveformBuffer);
-    _cameraFrameCount = 0;
-    _debugError = null;
+    try {
+      _isMonitoring = true;
+      _brightnessHistory.clear();
+      _heartRate = 0;
+      _frameCount = 0;
+      _latestBrightness = 0;
+      _lastFaceRect = null;
+      _framesSinceFaceSeen = 0;
+      _faceDetected = false;
+      _leftEyeOpen = true;
+      _rightEyeOpen = true;
+      _leftBlinkCount = 0;
+      _rightBlinkCount = 0;
+      _recentRawSamples.clear();
+      _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
+      _waveformNotifier.value = List<double>.from(_waveformBuffer);
+      _cameraFrameCount = 0;
+      _debugError = null;
+      _debugNotifier.value = 'در حال شروع...';
 
-    if (!_isStreaming) {
-      try {
+      if (!_isStreaming) {
         await _controller!.startImageStream(_onCameraImage);
         _isStreaming = true;
-      } catch (e) {
-        _debugError = 'خطا در شروع استریم دوربین: $e';
-        print(_debugError);
+      }
+
+      _timer = Timer.periodic(
+        Duration(milliseconds: 1000 ~/ sampleRate),
+        (timer) => _sampleBrightness(),
+      );
+
+      if (mounted) setState(() {});
+    } catch (e) {
+      _debugError = 'خطا در شروع پایش: $e';
+      _isMonitoring = false;
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_debugError!)),
+        );
       }
     }
-
-    _timer = Timer.periodic(
-      Duration(milliseconds: 1000 ~/ sampleRate),
-      (timer) => _sampleBrightness(),
-    );
-
-    setState(() {});
   }
 
   Future<void> _stopMonitoring() async {
@@ -228,7 +292,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _isStreaming = false;
     }
 
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   void _onCameraImage(CameraImage image) {
@@ -236,7 +300,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
     _cameraFrameCount++;
 
-    if (!_isDetectingFace) {
+    // تشخیص چهره فقط زمانی امتحان می‌شود که فرمت فعال با ML Kit سازگار باشد (تک-پلین)
+    if (image.planes.length == 1 && !_isDetectingFace) {
       _isDetectingFace = true;
       _detectFaceAndUpdateRoi(image);
     }
@@ -249,7 +314,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
             : _centerRoi(image.width, image.height);
 
         _latestBrightness = Platform.isAndroid
-            ? _averageBrightnessYUV(image, roi)
+            ? _averageBrightnessYPlane(image, roi)
             : _averageBrightnessBGRA(image, roi);
       } catch (e) {
         _debugError = 'خطا در پردازش فریم: $e';
@@ -277,7 +342,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         if (!_faceDetected && mounted) {
           setState(() => _faceDetected = true);
         }
-
         _updateBlinkState(face);
       } else {
         _framesSinceFaceSeen++;
@@ -289,14 +353,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         }
       }
     } catch (e) {
-      print('خطا در تشخیص چهره: $e');
+      // تشخیص چهره اختیاری است؛ خطای آن نباید اندازه‌گیری اصلی را متوقف کند
+      print('خطا در تشخیص چهره (نادیده گرفته شد): $e');
     } finally {
       _isDetectingFace = false;
     }
   }
 
-  // تشخیص کامل شدن یک پلک با فرضیه‌ی هیسترزیس (آستانه‌ی متفاوت برای بسته و باز شدن)
-  // تا نوسانات کوچک احتمال، به اشتباه چند پلک پشت‌سرهم ثبت نکنند
   void _updateBlinkState(Face face) {
     final leftProb = face.leftEyeOpenProbability;
     final rightProb = face.rightEyeOpenProbability;
@@ -331,15 +394,15 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   InputImage? _inputImageFromCameraImage(CameraImage image) {
     final camera = _controller?.description;
     if (camera == null) return null;
+    if (image.planes.length != 1) return null; // ML Kit فقط فرمت تک-پلین را می‌پذیرد
 
     final sensorOrientation = camera.sensorOrientation;
     InputImageRotation? rotation;
     if (Platform.isIOS) {
       rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
     } else if (Platform.isAndroid) {
-      var rotationCompensation =
-          _orientations[_controller!.value.deviceOrientation];
-      if (rotationCompensation == null) return null;
+      final deviceOrientation = _controller?.value.deviceOrientation;
+      var rotationCompensation = _orientations[deviceOrientation] ?? 0;
       if (camera.lensDirection == CameraLensDirection.front) {
         rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
       } else {
@@ -351,13 +414,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     if (rotation == null) return null;
 
     final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null ||
-        (Platform.isAndroid && format != InputImageFormat.nv21) ||
-        (Platform.isIOS && format != InputImageFormat.bgra8888)) {
-      return null;
-    }
+    if (format == null) return null;
 
-    if (image.planes.length != 1) return null;
     final plane = image.planes.first;
 
     return InputImage.fromBytes(
@@ -393,7 +451,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return _Roi(left, top, width, height);
   }
 
-  double _averageBrightnessYUV(CameraImage image, _Roi roi) {
+  // استخراج روشنایی مستقیم از صفحه‌ی Y (luminance) - کار می‌کند چه فرمت nv21 (تک-پلین)
+  // باشد چه yuv420 (سه-پلین)، چون در هر دو حالت plane نخست همان صفحه‌ی Y است
+  double _averageBrightnessYPlane(CameraImage image, _Roi roi) {
     final plane = image.planes[0];
     final bytes = plane.bytes;
     final bytesPerRow = plane.bytesPerRow;
@@ -406,7 +466,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     for (int y = roi.top; y < yEnd; y++) {
       final rowOffset = y * bytesPerRow;
       for (int x = roi.left; x < xEnd; x++) {
-        total += bytes[rowOffset + x];
+        final index = rowOffset + x;
+        if (index < 0 || index >= bytes.length) continue;
+        total += bytes[index];
         count++;
       }
     }
@@ -427,6 +489,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       final rowOffset = y * bytesPerRow;
       for (int x = roi.left; x < xEnd; x++) {
         final pixelOffset = rowOffset + x * 4;
+        if (pixelOffset + 2 >= bytes.length) continue;
         final b = bytes[pixelOffset];
         final g = bytes[pixelOffset + 1];
         final r = bytes[pixelOffset + 2];
@@ -440,9 +503,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   void _sampleBrightness() {
     if (!_isMonitoring) return;
 
-    // توجه: نمونه‌برداری دیگر به موفقیت تشخیص چهره وابسته نیست.
-    // اگر چهره شناسایی شود، ناحیه‌ی پیشانی برای دقت بهتر استفاده می‌شود (در _onCameraImage)
-    // ولی در نبود آن هم روی ناحیه‌ی مرکزی فریم اندازه‌گیری ادامه پیدا می‌کند.
+    // نمونه‌برداری همیشه انجام می‌شود، چه چهره شناسایی شده باشد چه نه
     _brightnessHistory.add(_latestBrightness.toInt());
 
     if (_brightnessHistory.length > windowSize) {
@@ -472,7 +533,20 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
-  // میانگین متحرک محلی برای هر نمونه (پنجره‌ی متقارن) - برای حذف روند آهسته (نور محیط، لرزش دست)
+  void _updateWaveform(double value) {
+    _recentRawSamples.add(value);
+    if (_recentRawSamples.length > _waveformShortWindow) {
+      _recentRawSamples.removeAt(0);
+    }
+    final localMean =
+        _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
+    final acValue = value - localMean;
+
+    _waveformBuffer.removeAt(0);
+    _waveformBuffer.add(acValue);
+    _waveformNotifier.value = List<double>.from(_waveformBuffer);
+  }
+
   List<double> _detrend(List<double> data, int halfWindow) {
     final n = data.length;
     final result = List<double>.filled(n, 0);
@@ -489,7 +563,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return result;
   }
 
-  // میانگین متحرک ساده برای حذف نویز ریز (لرزش پیکسل‌به‌پیکسل)
   List<double> _smooth(List<double> data, int halfWindow) {
     final n = data.length;
     final result = List<double>.filled(n, 0);
@@ -513,31 +586,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return sqrt(variance);
   }
 
-  // نسخه‌ی AC-coupled سیگنال برای نمایش زنده: از مقدار خام، میانگین کوتاه‌مدت اخیر کم می‌شود
-  // تا موج به‌جای یک عدد ثابت با افت‌وخیز آهسته، حول محور صفر نوسان کند (شبیه موج پالس واقعی)
-  void _updateWaveform(double value) {
-    _recentRawSamples.add(value);
-    if (_recentRawSamples.length > _waveformShortWindow) {
-      _recentRawSamples.removeAt(0);
-    }
-    final localMean =
-        _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
-    final acValue = value - localMean;
-
-    _waveformBuffer.removeAt(0);
-    _waveformBuffer.add(acValue);
-    _waveformNotifier.value = List<double>.from(_waveformBuffer);
-  }
-
   int _calculateHeartRate(List<int> brightnessData, int fps) {
     if (brightnessData.length < 30) return 0;
 
-    // مرحله ۱: هموارسازی سبک برای حذف نویز شات‌نویز پیکسل
     final raw = brightnessData.map((v) => v.toDouble()).toList();
     final smoothed = _smooth(raw, 1);
-
-    // مرحله ۲: حذف روند آهسته (baseline drift) با کم کردن میانگین متحرک محلی
-    // پنجره‌ی نیمه ~۱ ثانیه؛ فرکانس‌های زیر ~۰.۵ هرتز (۳۰ ضربه در دقیقه) حذف می‌شوند
     final detrended = _detrend(smoothed, fps ~/ 2);
 
     if (detrended.every((v) => v == 0)) return 0;
@@ -545,8 +598,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     final stdDev = _standardDeviation(detrended);
     if (stdDev == 0) return 0;
 
-    // آستانه‌ی برجستگی: قله باید حداقل این مقدار از صفر فاصله داشته باشد
-    // تا نویز کوچک به اشتباه به‌عنوان ضربان شمارش نشود
     final prominenceThreshold = stdDev * 0.35;
 
     List<int> peaks = [];
@@ -598,134 +649,158 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 20),
-            _controller != null && _controller!.value.isInitialized
-                ? Stack(
-                    alignment: Alignment.bottomCenter,
-                    children: [
-                      SizedBox(
-                        height: 200,
-                        width: 200,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(100),
-                          child: CameraPreview(_controller!),
-                        ),
-                      ),
-                      if (_isMonitoring && !_faceDetected)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              'چهره شناسایی نشد',
-                              style: TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                          ),
-                        ),
-                    ],
-                  )
-                : const CircularProgressIndicator(),
-            const SizedBox(height: 24),
-            Text(
-              '$_heartRate',
-              style: const TextStyle(
-                fontSize: 72,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
               ),
-            ),
-            const Text(
-              'ضربه در دقیقه (BPM)',
-              style: TextStyle(fontSize: 18, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            // نمایش زنده‌ی موج ضربان
-            Container(
-              height: 70,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 20),
+              _buildCameraPreview(),
+              const SizedBox(height: 24),
+              Text(
+                '$_heartRate',
+                style: const TextStyle(
+                  fontSize: 72,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
               ),
-              child: ValueListenableBuilder<List<double>>(
-                valueListenable: _waveformNotifier,
-                builder: (context, data, _) {
-                  return CustomPaint(
-                    size: const Size(double.infinity, 70),
-                    painter: _WaveformPainter(data),
+              const Text(
+                'ضربه در دقیقه (BPM)',
+                style: TextStyle(fontSize: 18, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                height: 70,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ValueListenableBuilder<List<double>>(
+                  valueListenable: _waveformNotifier,
+                  builder: (context, data, _) {
+                    return CustomPaint(
+                      size: const Size(double.infinity, 70),
+                      painter: _WaveformPainter(data),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 6),
+              ValueListenableBuilder<String>(
+                valueListenable: _debugNotifier,
+                builder: (context, text, _) {
+                  return Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _debugError != null ? Colors.red : Colors.grey,
+                    ),
+                    textAlign: TextAlign.center,
                   );
                 },
               ),
-            ),
-            const SizedBox(height: 6),
-            // متن دیباگ موقت - نشان می‌دهد فریم از دوربین می‌رسد یا نه و کجا گیر کرده
-            ValueListenableBuilder<String>(
-              valueListenable: _debugNotifier,
-              builder: (context, text, _) {
-                return Text(
-                  text,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _debugError != null ? Colors.red : Colors.grey,
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Column(
+                    children: [
+                      Icon(
+                        _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.blue,
+                      ),
+                      const SizedBox(height: 4),
+                      Text('پلک چپ: $_rightBlinkCount'),
+                    ],
                   ),
-                  textAlign: TextAlign.center,
-                );
-              },
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Column(
-                  children: [
-                    Icon(
-                      _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
-                      color: Colors.blue,
-                    ),
-                    const SizedBox(height: 4),
-                    Text('پلک چپ: $_rightBlinkCount'),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Icon(
-                      _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
-                      color: Colors.blue,
-                    ),
-                    const SizedBox(height: 4),
-                    Text('پلک راست: $_leftBlinkCount'),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 36),
-            ElevatedButton.icon(
-              onPressed: _controller == null ? null : _toggleMonitoring,
-              icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
-              label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 54),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  Column(
+                    children: [
+                      Icon(
+                        _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.blue,
+                      ),
+                      const SizedBox(height: 4),
+                      Text('پلک راست: $_leftBlinkCount'),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 36),
+              ElevatedButton.icon(
+                onPressed: _toggleMonitoring,
+                icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
+                label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 54),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCameraPreview() {
+    if (_initError != null) {
+      return Column(
+        children: [
+          Icon(Icons.error_outline, color: Colors.red, size: 48),
+          const SizedBox(height: 8),
+          Text(
+            _initError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.red, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: _initCamera,
+            child: const Text('تلاش دوباره'),
+          ),
+        ],
+      );
+    }
+
+    if (_controller == null || !_controller!.value.isInitialized) {
+      return const CircularProgressIndicator();
+    }
+
+    return Stack(
+      alignment: Alignment.bottomCenter,
+      children: [
+        SizedBox(
+          height: 200,
+          width: 200,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(100),
+            child: CameraPreview(_controller!),
+          ),
+        ),
+        if (_isMonitoring && !_faceDetected)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'چهره شناسایی نشد',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -737,7 +812,6 @@ class _WaveformPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // خط پایه‌ی وسط
     final basePaint = Paint()
       ..color = Colors.white24
       ..strokeWidth = 1;
@@ -749,7 +823,6 @@ class _WaveformPainter extends CustomPainter {
 
     if (data.length < 2) return;
 
-    // مقیاس‌بندی خودکار بر اساس بزرگ‌ترین دامنه‌ی فعلی موج، تا موج همیشه در کادر جا شود
     double maxAbs = 0;
     for (final v in data) {
       final a = v.abs();
