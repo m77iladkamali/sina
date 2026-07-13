@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
@@ -336,8 +337,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
     _cameraFrameCount++;
 
-    // تشخیص چهره فقط زمانی امتحان می‌شود که فرمت فعال با ML Kit سازگار باشد (تک-پلین)
-    if (image.planes.length == 1 && !_isDetectingFace) {
+    // تشخیص چهره برای هر دو فرمت nv21 (تک‌پلین) و yuv420 (سه‌پلین) امتحان می‌شود؛
+    // تبدیل لازم داخل _inputImageFromCameraImage انجام می‌گیرد.
+    if (!_isDetectingFace) {
       _isDetectingFace = true;
       _detectFaceAndUpdateRoi(image);
     }
@@ -463,7 +465,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   InputImage? _inputImageFromCameraImage(CameraImage image) {
     final camera = _controller?.description;
     if (camera == null) return null;
-    if (image.planes.length != 1) return null; // ML Kit فقط فرمت تک-پلین را می‌پذیرد
 
     final sensorOrientation = camera.sensorOrientation;
     InputImageRotation? rotation;
@@ -482,20 +483,91 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     if (rotation == null) return null;
 
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null) return null;
+    // حالت ۱: فرمت تک-پلین (nv21 روی اندروید، یا bgra8888 روی iOS) - مستقیم قابل استفاده است.
+    if (image.planes.length == 1) {
+      final format = InputImageFormatValue.fromRawValue(image.format.raw);
+      if (format == null) return null;
+      final plane = image.planes.first;
+      return InputImage.fromBytes(
+        bytes: plane.bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: format,
+          bytesPerRow: plane.bytesPerRow,
+        ),
+      );
+    }
 
-    final plane = image.planes.first;
+    // حالت ۲: yuv420 سه‌پلین (رایج‌ترین فرمت روی اندروید). ML Kit روی این پکیج
+    // فرمت‌های چندپلین را مستقیم نمی‌پذیرد، پس آن را به یک بافر تک‌پلین nv21
+    // تبدیل می‌کنیم (Y کامل + VU به‌صورت interleaved). این تبدیل استاندارد و
+    // تنها راه شناخته‌شده برای این‌که تشخیص چهره روی فرمت yuv420 کار کند.
+    if (image.planes.length == 3) {
+      try {
+        final nv21Bytes = _yuv420ToNv21(image);
+        return InputImage.fromBytes(
+          bytes: nv21Bytes,
+          metadata: InputImageMetadata(
+            size: Size(image.width.toDouble(), image.height.toDouble()),
+            rotation: rotation,
+            format: InputImageFormat.nv21,
+            bytesPerRow: image.width,
+          ),
+        );
+      } catch (e) {
+        debugPrint('خطا در تبدیل yuv420 به nv21: $e');
+        return null;
+      }
+    }
 
-    return InputImage.fromBytes(
-      bytes: plane.bytes,
-      metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: rotation,
-        format: format,
-        bytesPerRow: plane.bytesPerRow,
-      ),
-    );
+    return null;
+  }
+
+  // تبدیل فریم سه‌پلینِ yuv420 (پلین‌های Y، U، V که ممکن است pixelStride و
+  // rowStride متفاوتی داشته باشند) به یک بافر تک‌پلین nv21 استاندارد:
+  // ابتدا کل صفحه‌ی Y بدون padding، سپس بایت‌های V و U به‌صورت interleaved.
+  Uint8List _yuv420ToNv21(CameraImage image) {
+    final width = image.width;
+    final height = image.height;
+    final yPlane = image.planes[0];
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+
+    final nv21 = Uint8List(width * height + (width * height ~/ 2));
+
+    // کپی صفحه‌ی Y، ردیف به ردیف، برای حذف padding احتمالی بین ردیف‌ها
+    int offset = 0;
+    for (int row = 0; row < height; row++) {
+      final rowStart = row * yPlane.bytesPerRow;
+      nv21.setRange(offset, offset + width, yPlane.bytes, rowStart);
+      offset += width;
+    }
+
+    // کپی V و U به‌صورت interleaved (VUVUVU...) که فرمت nv21 انتظار دارد
+    final uvPixelStride = uPlane.bytesPerPixel ?? 1;
+    final uvRowStride = uPlane.bytesPerRow;
+    final chromaHeight = height ~/ 2;
+    final chromaWidth = width ~/ 2;
+
+    for (int row = 0; row < chromaHeight; row++) {
+      for (int col = 0; col < chromaWidth; col++) {
+        final vIndex = row * uvRowStride + col * uvPixelStride;
+        final uIndex = row * uvRowStride + col * uvPixelStride;
+        if (vIndex < vPlane.bytes.length) {
+          nv21[offset++] = vPlane.bytes[vIndex];
+        } else {
+          offset++;
+        }
+        if (uIndex < uPlane.bytes.length) {
+          nv21[offset++] = uPlane.bytes[uIndex];
+        } else {
+          offset++;
+        }
+      }
+    }
+
+    return nv21;
   }
 
   _Roi _centerRoi(int imageWidth, int imageHeight) {
