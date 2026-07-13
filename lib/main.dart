@@ -263,6 +263,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _leftBlinkCount = 0;
       _rightBlinkCount = 0;
       _recentRawSamples.clear();
+      _filteredAcValue = 0;
+      _filterInitialized = false;
       _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
       _waveformNotifier.value = List<double>.from(_waveformBuffer);
       _cameraFrameCount = 0;
@@ -641,6 +643,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return count == 0 ? 0 : total / count;
   }
 
+  // ثابت‌زمانی فیلتر پایین‌گذر: مقدار آلفا طوری انتخاب شده که فرکانس قطع تقریباً
+  // ۳.۵ هرتز (معادل ۲۱۰ ضربه در دقیقه، بالاترین حد فیزیولوژیک قلب) باشد.
+  // فرمول: alpha = dt / (RC + dt) که در آن RC = 1 / (2*pi*fc)
+  static const double _lowPassCutoffHz = 3.5;
+  double _filteredAcValue = 0;
+  bool _filterInitialized = false;
+
   void _updateWaveform(double value) {
     _recentRawSamples.add(value);
     if (_recentRawSamples.length > _waveformShortWindow) {
@@ -650,8 +659,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
     final acValue = value - localMean;
 
+    // فیلتر پایین‌گذر تک‌قطبی (one-pole low-pass) برای حذف نویز فرکانس‌بالا
+    // (لرزش دست، نویز حسگر) بدون از بین بردن شکل قله‌های ضربان قلب
+    final dt = 1.0 / sampleRate;
+    final rc = 1.0 / (2 * pi * _lowPassCutoffHz);
+    final alpha = dt / (rc + dt);
+
+    if (!_filterInitialized) {
+      _filteredAcValue = acValue;
+      _filterInitialized = true;
+    } else {
+      _filteredAcValue = _filteredAcValue + alpha * (acValue - _filteredAcValue);
+    }
+
     _waveformBuffer.removeAt(0);
-    _waveformBuffer.add(acValue);
+    _waveformBuffer.add(_filteredAcValue);
     _waveformNotifier.value = List<double>.from(_waveformBuffer);
   }
 
