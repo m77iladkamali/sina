@@ -270,6 +270,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     } catch (e) {
       _debugError = 'خطا در شروع پایش: $e';
       _isMonitoring = false;
+      _debugNotifier.value = _debugError!;
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
