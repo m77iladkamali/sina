@@ -265,6 +265,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _recentRawSamples.clear();
       _filteredAcValue = 0;
       _filterInitialized = false;
+      _recentFilteredSamples.clear();
+      _samplesSinceLastBeat = 999;
+      _pulsePhase = 1.0;
+      _pulseStepPerSample = 0.05;
       _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
       _waveformNotifier.value = List<double>.from(_waveformBuffer);
       _cameraFrameCount = 0;
@@ -650,6 +654,22 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   double _filteredAcValue = 0;
   bool _filterInitialized = false;
 
+  // === تشخیص لحظه‌ای قله (real-time peak detection) ===
+  // به‌جای رسم مستقیم سیگنال خام فیلترشده (که دامنه‌اش نویزی و نامنظم است)،
+  // هر ضربان واقعی را که در سیگنال رخ می‌دهد شناسایی می‌کنیم و یک شکل‌موج
+  // استاندارد PPG (صعود تند + فرود نرم، با ارتفاع همیشه یکسان) را دقیقاً در
+  // همان لحظه‌ی زمانی واقعی رسم می‌کنیم. این یعنی فاصله‌ی افقی قله‌ها همیشه
+  // صادقانه از زمان‌بندی واقعی ضربان می‌آید، ولی ارتفاعشان یکنواخت و خوانا است.
+  final List<double> _recentFilteredSamples = [];
+  static const int _peakDetectWindow = 5; // نیم‌پنجره برای تشخیص کمینه/بیشینه‌ی محلی
+  int _samplesSinceLastBeat = 999;
+  static const int _minSamplesBetweenBeats =
+      (sampleRate * 60) ~/ 220; // حداقل فاصله معادل سقف فیزیولوژیک ۲۲۰ BPM
+
+  // فاز پالس مصنوعی در حال رسم (۰ = شروع صعود، ۱ = پایان یک سیکل کامل)
+  double _pulsePhase = 1.0;
+  double _pulseStepPerSample = 0.05;
+
   void _updateWaveform(double value) {
     _recentRawSamples.add(value);
     if (_recentRawSamples.length > _waveformShortWindow) {
@@ -672,10 +692,82 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _filteredAcValue = _filteredAcValue + alpha * (acValue - _filteredAcValue);
     }
 
+    // --- تشخیص قله‌ی محلی روی سیگنال فیلترشده ---
+    _recentFilteredSamples.add(_filteredAcValue);
+    if (_recentFilteredSamples.length > _peakDetectWindow * 2 + 1) {
+      _recentFilteredSamples.removeAt(0);
+    }
+    _samplesSinceLastBeat++;
+
+    bool beatDetected = false;
+    if (_recentFilteredSamples.length == _peakDetectWindow * 2 + 1) {
+      final mid = _recentFilteredSamples[_peakDetectWindow];
+      bool isLocalMax = true;
+      for (int i = 0; i < _recentFilteredSamples.length; i++) {
+        if (i == _peakDetectWindow) continue;
+        if (_recentFilteredSamples[i] > mid) {
+          isLocalMax = false;
+          break;
+        }
+      }
+      // حداقل دامنه‌ی قابل‌قبول برای رد کردن نویز تخت (بدون سیگنال معنادار)
+      final hasMeaningfulAmplitude = mid.abs() > 0.05;
+
+      if (isLocalMax &&
+          hasMeaningfulAmplitude &&
+          _samplesSinceLastBeat >= _minSamplesBetweenBeats) {
+        beatDetected = true;
+        _samplesSinceLastBeat = 0;
+      }
+    }
+
+    if (beatDetected) {
+      // فاصله‌ی زمانی واقعی بین دو ضربان اخیر، سرعت رسم پالس بعدی را تعیین می‌کند
+      // تا شکل قله همیشه یک اندازه بماند اما فاصله‌ی افقی صادقانه از زمان واقعی بیاید.
+      final beatIntervalSamples = _samplesSinceLastBeat > 0
+          ? _samplesSinceLastBeat
+          : (sampleRate * 60 / (_heartRate > 0 ? _heartRate : 75)).round();
+      _pulseStepPerSample =
+          1.0 / max(6, min(60, beatIntervalSamples)).toDouble();
+      _pulsePhase = 0.0;
+    }
+
+    // پیش‌بردن فاز پالس مصنوعی؛ وقتی به انتها برسد صاف (خط پایه) می‌ماند تا ضربان بعدی
+    final pulseValue = _pulseShape(_pulsePhase);
+    if (_pulsePhase < 1.0) {
+      _pulsePhase = min(1.0, _pulsePhase + _pulseStepPerSample);
+    }
+
     _waveformBuffer.removeAt(0);
-    _waveformBuffer.add(_filteredAcValue);
+    _waveformBuffer.add(pulseValue);
     _waveformNotifier.value = List<double>.from(_waveformBuffer);
   }
+
+  // شکل استاندارد یک پالس PPG: صعود سریع تا قله، سپس فرود نرم‌تر با یک دندانه‌ی
+  // کوچک ثانویه (dicrotic notch) شبیه موج واقعی نبض - ارتفاع همیشه ثابت (بین ۰ و ۱).
+  double _pulseShape(double phase) {
+    if (phase >= 1.0) return 0.0;
+    if (phase < 0.18) {
+      // صعود تند تا قله
+      final t = phase / 0.18;
+      return _easeOutCubic(t);
+    } else if (phase < 0.45) {
+      // فرود اولیه‌ی سریع بعد از قله
+      final t = (phase - 0.18) / 0.27;
+      return 1.0 - _easeInCubic(t) * 0.65;
+    } else if (phase < 0.60) {
+      // دندانه‌ی کوچک ثانویه (dicrotic notch) - مشخصه‌ی موج واقعی نبض
+      final t = (phase - 0.45) / 0.15;
+      return 0.35 + sin(t * pi) * 0.12;
+    } else {
+      // بازگشت نرم به خط پایه
+      final t = (phase - 0.60) / 0.40;
+      return (0.35 + sin(0.0)) * (1.0 - _easeOutCubic(t));
+    }
+  }
+
+  double _easeOutCubic(double t) => 1 - pow(1 - t, 3).toDouble();
+  double _easeInCubic(double t) => pow(t, 3).toDouble();
 
   List<double> _detrend(List<double> data, int halfWindow) {
     final n = data.length;
