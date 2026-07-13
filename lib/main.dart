@@ -116,6 +116,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   final List<double> _recentRawSamples = [];
   final ValueNotifier<List<double>> _waveformNotifier =
       ValueNotifier<List<double>>(List<double>.filled(waveformLength, 0));
+  final ValueNotifier<String> _debugNotifier = ValueNotifier<String>('');
+
+  // فیلدهای دیباگ - برای تشخیص این‌که مسیر پردازش فریم دقیقاً کجا متوقف می‌شود
+  int _cameraFrameCount = 0;
+  String? _debugError;
 
   static const Map<DeviceOrientation, int> _orientations = {
     DeviceOrientation.portraitUp: 0,
@@ -189,10 +194,17 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _recentRawSamples.clear();
     _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
     _waveformNotifier.value = List<double>.from(_waveformBuffer);
+    _cameraFrameCount = 0;
+    _debugError = null;
 
     if (!_isStreaming) {
-      await _controller!.startImageStream(_onCameraImage);
-      _isStreaming = true;
+      try {
+        await _controller!.startImageStream(_onCameraImage);
+        _isStreaming = true;
+      } catch (e) {
+        _debugError = 'خطا در شروع استریم دوربین: $e';
+        print(_debugError);
+      }
     }
 
     _timer = Timer.periodic(
@@ -222,6 +234,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   void _onCameraImage(CameraImage image) {
     if (!_isMonitoring) return;
 
+    _cameraFrameCount++;
+
     if (!_isDetectingFace) {
       _isDetectingFace = true;
       _detectFaceAndUpdateRoi(image);
@@ -238,7 +252,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
             ? _averageBrightnessYUV(image, roi)
             : _averageBrightnessBGRA(image, roi);
       } catch (e) {
-        print('خطا در پردازش فریم: $e');
+        _debugError = 'خطا در پردازش فریم: $e';
+        print(_debugError);
       } finally {
         _isProcessingFrame = false;
       }
@@ -438,6 +453,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
     _frameCount++;
 
+    if (_frameCount % 10 == 0) {
+      _debugNotifier.value = _debugError ??
+          'فریم دوربین: $_cameraFrameCount | نمونه: ${_brightnessHistory.length}/$windowSize | روشنایی: ${_latestBrightness.toStringAsFixed(1)}';
+    }
+
     if (_frameCount % recalcIntervalFrames == 0 &&
         _brightnessHistory.length >= windowSize) {
       final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
@@ -565,6 +585,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _controller?.dispose();
     _faceDetector.close();
     _waveformNotifier.dispose();
+    _debugNotifier.dispose();
     super.dispose();
   }
 
@@ -649,8 +670,22 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
                 },
               ),
             ),
-            const SizedBox(height: 24),
-            // شمارنده‌ی پلک زدن هر چشم
+            const SizedBox(height: 6),
+            // متن دیباگ موقت - نشان می‌دهد فریم از دوربین می‌رسد یا نه و کجا گیر کرده
+            ValueListenableBuilder<String>(
+              valueListenable: _debugNotifier,
+              builder: (context, text, _) {
+                return Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: _debugError != null ? Colors.red : Colors.grey,
+                  ),
+                  textAlign: TextAlign.center,
+                );
+              },
+            ),
+            const SizedBox(height: 18),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
