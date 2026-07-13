@@ -101,7 +101,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   // اندازه‌گیری ضربان قلب و موج بدون آن هم کار می‌کنند.
   late final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.fast,
+      performanceMode: FaceDetectorMode.accurate,
       enableClassification: true,
       enableTracking: false,
     ),
@@ -116,8 +116,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   bool _rightEyeOpen = true;
   int _leftBlinkCount = 0;
   int _rightBlinkCount = 0;
-  static const double _eyeClosedThreshold = 0.3;
-  static const double _eyeOpenThreshold = 0.6;
+  static const double _eyeClosedThreshold = 0.4;
+  static const double _eyeOpenThreshold = 0.55;
 
   // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
   static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
@@ -266,7 +266,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _filteredAcValue = 0;
       _filterInitialized = false;
       _recentFilteredSamples.clear();
+      _ampHistoryBuffer.clear();
       _samplesSinceLastBeat = 999;
+      _lastBeatIntervalSamples = 0;
       _pulsePhase = 1.0;
       _pulseStepPerSample = 0.05;
       _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
@@ -661,8 +663,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   // همان لحظه‌ی زمانی واقعی رسم می‌کنیم. این یعنی فاصله‌ی افقی قله‌ها همیشه
   // صادقانه از زمان‌بندی واقعی ضربان می‌آید، ولی ارتفاعشان یکنواخت و خوانا است.
   final List<double> _recentFilteredSamples = [];
+  final List<double> _ampHistoryBuffer = []; // برای محاسبه‌ی آستانه‌ی تطبیقی، مستقل از موج نمایشی
+  static const int _ampHistoryWindow = 20;
   static const int _peakDetectWindow = 5; // نیم‌پنجره برای تشخیص کمینه/بیشینه‌ی محلی
   int _samplesSinceLastBeat = 999;
+  int _lastBeatIntervalSamples = 0;
   static const int _minSamplesBetweenBeats =
       (sampleRate * 60) ~/ 220; // حداقل فاصله معادل سقف فیزیولوژیک ۲۲۰ BPM
 
@@ -697,6 +702,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     if (_recentFilteredSamples.length > _peakDetectWindow * 2 + 1) {
       _recentFilteredSamples.removeAt(0);
     }
+    _ampHistoryBuffer.add(_filteredAcValue);
+    if (_ampHistoryBuffer.length > _ampHistoryWindow) {
+      _ampHistoryBuffer.removeAt(0);
+    }
     _samplesSinceLastBeat++;
 
     bool beatDetected = false;
@@ -710,22 +719,26 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
           break;
         }
       }
-      // حداقل دامنه‌ی قابل‌قبول برای رد کردن نویز تخت (بدون سیگنال معنادار)
-      final hasMeaningfulAmplitude = mid.abs() > 0.05;
+      // آستانه‌ی دامنه‌ی تطبیقی: به‌جای مقدار ثابت، بر اساس انحراف معیار سیگنال
+      // اخیر محاسبه می‌شود تا با شرایط نوری مختلف (نور کم/زیاد) خودش را وفق دهد
+      final amplitudeThreshold = _adaptiveAmplitudeThreshold();
+      final hasMeaningfulAmplitude = mid.abs() > amplitudeThreshold;
 
       if (isLocalMax &&
           hasMeaningfulAmplitude &&
           _samplesSinceLastBeat >= _minSamplesBetweenBeats) {
         beatDetected = true;
+        _lastBeatIntervalSamples = _samplesSinceLastBeat;
         _samplesSinceLastBeat = 0;
       }
     }
 
     if (beatDetected) {
-      // فاصله‌ی زمانی واقعی بین دو ضربان اخیر، سرعت رسم پالس بعدی را تعیین می‌کند
-      // تا شکل قله همیشه یک اندازه بماند اما فاصله‌ی افقی صادقانه از زمان واقعی بیاید.
-      final beatIntervalSamples = _samplesSinceLastBeat > 0
-          ? _samplesSinceLastBeat
+      // فاصله‌ی زمانی واقعی بین دو ضربان اخیر (ذخیره‌شده قبل از صفر شدن شمارنده)
+      // سرعت رسم پالس بعدی را تعیین می‌کند تا شکل قله همیشه یک اندازه بماند
+      // اما فاصله‌ی افقی صادقانه از زمان واقعی بیاید، نه از BPM میانگین‌گیری‌شده.
+      final beatIntervalSamples = _lastBeatIntervalSamples > 0
+          ? _lastBeatIntervalSamples
           : (sampleRate * 60 / (_heartRate > 0 ? _heartRate : 75)).round();
       _pulseStepPerSample =
           1.0 / max(6, min(60, beatIntervalSamples)).toDouble();
@@ -743,17 +756,18 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _waveformNotifier.value = List<double>.from(_waveformBuffer);
   }
 
-  // شکل استاندارد یک پالس PPG: صعود سریع تا قله، سپس فرود نرم‌تر با یک دندانه‌ی
-  // کوچک ثانویه (dicrotic notch) شبیه موج واقعی نبض - ارتفاع همیشه ثابت (بین ۰ و ۱).
+  // شکل استاندارد یک پالس PPG: صعود تیز (شتاب‌گیرنده تا لحظه‌ی آخر، بدون گرد شدن
+  // نزدیک قله) سپس فرود نرم‌تر با یک دندانه‌ی کوچک ثانویه (dicrotic notch) شبیه
+  // موج واقعی نبض - ارتفاع همیشه ثابت (بین ۰ و ۱) و نوک قله همیشه تیز.
   double _pulseShape(double phase) {
     if (phase >= 1.0) return 0.0;
-    if (phase < 0.18) {
-      // صعود تند تا قله
-      final t = phase / 0.18;
-      return _easeOutCubic(t);
+    if (phase < 0.15) {
+      // صعود تیز: از easeIn استفاده می‌شود تا شیب نزدیک قله صفر نشود و نوک تیز بماند
+      final t = phase / 0.15;
+      return _easeInQuad(t);
     } else if (phase < 0.45) {
       // فرود اولیه‌ی سریع بعد از قله
-      final t = (phase - 0.18) / 0.27;
+      final t = (phase - 0.15) / 0.30;
       return 1.0 - _easeInCubic(t) * 0.65;
     } else if (phase < 0.60) {
       // دندانه‌ی کوچک ثانویه (dicrotic notch) - مشخصه‌ی موج واقعی نبض
@@ -768,6 +782,23 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   double _easeOutCubic(double t) => 1 - pow(1 - t, 3).toDouble();
   double _easeInCubic(double t) => pow(t, 3).toDouble();
+  double _easeInQuad(double t) => t * t;
+
+  // آستانه‌ی دامنه‌ی تطبیقی برای تشخیص قله: بر پایه‌ی انحراف معیار سیگنال فیلترشده‌ی
+  // اخیر (پنجره‌ی کوتاه، هم‌راستا با _waveformShortWindow). این کار باعث می‌شود
+  // در نور کم (دامنه‌ی سیگنال کوچک) قله‌های واقعی رد نشوند، و در نور شدید یا نویز
+  // زیاد، نوسانات کوچک به‌اشتباه به‌عنوان ضربان شمرده نشوند.
+  double _adaptiveAmplitudeThreshold() {
+    if (_ampHistoryBuffer.length < 10) return 0.05;
+    final samples = _ampHistoryBuffer;
+    final variance = samples
+            .map((v) => v * v) // سیگنال فیلترشده AC-coupled است، میانگین تقریبی صفر
+            .reduce((a, b) => a + b) /
+        samples.length;
+    final stdDev = sqrt(variance);
+    // حداقل ۲۵٪ انحراف معیار اخیر، با کف مطلق کوچک برای جلوگیری از حساسیت بیش از حد
+    return max(0.02, stdDev * 0.25);
+  }
 
   List<double> _detrend(List<double> data, int halfWindow) {
     final n = data.length;
