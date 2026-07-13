@@ -81,16 +81,18 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   bool _isMonitoring = false;
   int _heartRate = 0;
   final List<int> _brightnessHistory = [];
-  Timer? _timer;
   int _frameCount = 0;
 
-  double _latestBrightness = 0;
   bool _isProcessingFrame = false;
   bool _isStreaming = false;
 
   // وضعیت راه‌اندازی دوربین
   String? _initError;
-  ImageFormatGroup? _activeImageFormat;
+
+  // === واچ‌داگ: تشخیص قطعی این‌که آیا استریم دوربین اصلاً فریمی می‌رساند یا نه ===
+  Timer? _watchdogTimer;
+  int _lastWatchdogFrameCount = -1;
+  static const int _watchdogTimeoutSeconds = 3;
 
   // تشخیص چهره + طبقه‌بندی (برای احتمال باز/بسته بودن چشم‌ها)
   // توجه: این ویژگی کاملاً اختیاری است؛ اگر فرمت تصویر با آن سازگار نباشد
@@ -137,9 +139,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   };
 
   // تنظیمات الگوریتم
-  static const int sampleRate = 30; // ۳۰ نمونه در ثانیه
-  static const int windowSize = 240; // ۸ ثانیه داده (برای دقت بهتر در تشخیص فرکانس)
-  static const int recalcIntervalFrames = sampleRate * 3; // هر ۳ ثانیه یک‌بار محاسبه‌ی مجدد
+  static const int sampleRate = 30; // ۳۰ نمونه در ثانیه (تقریبی - نرخ واقعی فریم دوربین است)
+  static const int windowSize = 240; // ~۸ ثانیه داده (برای دقت بهتر در تشخیص فرکانس)
+  static const int recalcIntervalFrames = sampleRate * 3; // هر ~۳ ثانیه یک‌بار محاسبه‌ی مجدد
 
   @override
   void initState() {
@@ -174,8 +176,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       orElse: () => cameras.first,
     );
 
+    // نکته‌ی مهم: روی برخی دستگاه‌های اندروید ترکیب nv21 + ResolutionPreset.low
+    // باعث شکست خاموش initialize یا عدم رسیدن فریم از پلتفرم چنل می‌شود.
+    // yuv420 پایدارترین فرمت روی تقریباً همه‌ی دستگاه‌های اندروید است، برای همین
+    // آن را هم به‌عنوان گزینه‌ی اول امتحان می‌کنیم (چهره‌یابی چندپلین را غیرفعال می‌کند
+    // ولی اندازه‌گیری ضربان قلب کاملاً مستقل از آن کار می‌کند).
     final formatsToTry = Platform.isAndroid
-        ? [ImageFormatGroup.nv21, ImageFormatGroup.yuv420]
+        ? [ImageFormatGroup.yuv420, ImageFormatGroup.nv21]
         : [ImageFormatGroup.bgra8888];
 
     Object? lastError;
@@ -196,18 +203,20 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
           await controller.setExposureMode(ExposureMode.locked);
         } catch (_) {}
 
-        _controller = controller;
-        _activeImageFormat = format;
-
-        if (mounted) {
-          setState(() {
-            _initError = null;
-          });
+        if (!mounted) {
+          await controller.dispose();
+          return;
         }
+
+        _controller = controller;
+
+        setState(() {
+          _initError = null;
+        });
         return; // موفق شد - از تابع خارج می‌شویم
       } catch (e) {
         lastError = e;
-        print('خطا در راه‌اندازی دوربین با فرمت $format: $e');
+        debugPrint('خطا در راه‌اندازی دوربین با فرمت $format: $e');
       }
     }
 
@@ -241,7 +250,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _brightnessHistory.clear();
       _heartRate = 0;
       _frameCount = 0;
-      _latestBrightness = 0;
       _lastFaceRect = null;
       _framesSinceFaceSeen = 0;
       _faceDetected = false;
@@ -254,16 +262,22 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _waveformNotifier.value = List<double>.from(_waveformBuffer);
       _cameraFrameCount = 0;
       _debugError = null;
-      _debugNotifier.value = 'در حال شروع...';
+      _debugNotifier.value = 'در حال شروع دریافت فریم از دوربین...';
 
       if (!_isStreaming) {
         await _controller!.startImageStream(_onCameraImage);
         _isStreaming = true;
       }
 
-      _timer = Timer.periodic(
-        Duration(milliseconds: 1000 ~/ sampleRate),
-        (timer) => _sampleBrightness(),
+      // واچ‌داگ: هر چند ثانیه بررسی می‌کند که آیا شمارنده‌ی فریم واقعاً پیش می‌رود.
+      // اگر پیش نرود یعنی startImageStream روی این دستگاه فریمی نمی‌رساند
+      // (معمولاً به‌خاطر مجوز دوربین، اشغال بودن دوربین توسط برنامه‌ی دیگر، یا
+      // ناسازگاری فرمت تصویر روی آن دستگاه‌ی خاص).
+      _lastWatchdogFrameCount = -1;
+      _watchdogTimer?.cancel();
+      _watchdogTimer = Timer.periodic(
+        const Duration(seconds: _watchdogTimeoutSeconds),
+        (_) => _checkStreamHealth(),
       );
 
       if (mounted) setState(() {});
@@ -280,10 +294,23 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
+  void _checkStreamHealth() {
+    if (!_isMonitoring) return;
+    if (_cameraFrameCount == _lastWatchdogFrameCount) {
+      // در ۳ ثانیه‌ی اخیر حتی یک فریم هم از دوربین نرسیده است.
+      _debugError = 'هیچ فریمی از دوربین دریافت نمی‌شود.\n'
+          'دوربین ممکن است توسط برنامه‌ی دیگری در حال استفاده باشد،\n'
+          'یا مجوز دوربین به‌درستی اعطا نشده باشد.';
+      _debugNotifier.value = _debugError!;
+      if (mounted) setState(() {});
+    }
+    _lastWatchdogFrameCount = _cameraFrameCount;
+  }
+
   Future<void> _stopMonitoring() async {
     _isMonitoring = false;
-    _timer?.cancel();
-    _timer = null;
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
     _heartRate = 0;
 
     if (_isStreaming && _controller != null) {
@@ -296,6 +323,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     if (mounted) setState(() {});
   }
 
+  // نمونه‌برداری اکنون مستقیماً داخل کال‌بک استریم دوربین انجام می‌شود، نه یک
+  // Timer.periodic جدا. این تضمین می‌کند که نرخ نمونه‌برداری دقیقاً با نرخ
+  // واقعی فریم دوربین هماهنگ باشد و اگر فریمی نرسد، ما هم منتظر آن نمی‌مانیم
+  // (به‌جای این‌که تایمر جدا هر بار روی همان مقدار قدیمی brightness کار کند).
   void _onCameraImage(CameraImage image) {
     if (!_isMonitoring) return;
 
@@ -307,21 +338,54 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _detectFaceAndUpdateRoi(image);
     }
 
-    if (!_isProcessingFrame) {
-      _isProcessingFrame = true;
-      try {
-        final roi = _lastFaceRect != null
-            ? _foreheadRoiFromFace(_lastFaceRect!, image.width, image.height)
-            : _centerRoi(image.width, image.height);
+    if (_isProcessingFrame) return;
+    _isProcessingFrame = true;
 
-        _latestBrightness = Platform.isAndroid
-            ? _averageBrightnessYPlane(image, roi)
-            : _averageBrightnessBGRA(image, roi);
-      } catch (e) {
-        _debugError = 'خطا در پردازش فریم: $e';
-        print(_debugError);
-      } finally {
-        _isProcessingFrame = false;
+    double brightness = 0;
+    try {
+      final roi = _lastFaceRect != null
+          ? _foreheadRoiFromFace(_lastFaceRect!, image.width, image.height)
+          : _centerRoi(image.width, image.height);
+
+      brightness = Platform.isAndroid
+          ? _averageBrightnessYPlane(image, roi)
+          : _averageBrightnessBGRA(image, roi);
+
+      _handleNewBrightnessSample(brightness);
+    } catch (e) {
+      _debugError = 'خطا در پردازش فریم: $e';
+      debugPrint(_debugError);
+      _debugNotifier.value = _debugError!;
+    } finally {
+      _isProcessingFrame = false;
+    }
+  }
+
+  void _handleNewBrightnessSample(double brightness) {
+    _brightnessHistory.add(brightness.toInt());
+    if (_brightnessHistory.length > windowSize) {
+      _brightnessHistory.removeAt(0);
+    }
+
+    _updateWaveform(brightness);
+
+    _frameCount++;
+
+    if (_frameCount % 10 == 0) {
+      _debugNotifier.value = _debugError ??
+          'فریم دوربین: $_cameraFrameCount | نمونه: ${_brightnessHistory.length}/$windowSize | روشنایی: ${brightness.toStringAsFixed(1)}';
+    }
+
+    if (_frameCount % recalcIntervalFrames == 0 &&
+        _brightnessHistory.length >= windowSize) {
+      final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
+
+      if (computed > 0 && mounted) {
+        setState(() {
+          _heartRate = _heartRate == 0
+              ? computed
+              : ((_heartRate * 0.6) + (computed * 0.4)).round();
+        });
       }
     }
   }
@@ -355,7 +419,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       }
     } catch (e) {
       // تشخیص چهره اختیاری است؛ خطای آن نباید اندازه‌گیری اصلی را متوقف کند
-      print('خطا در تشخیص چهره (نادیده گرفته شد): $e');
+      debugPrint('خطا در تشخیص چهره (نادیده گرفته شد): $e');
     } finally {
       _isDetectingFace = false;
     }
@@ -501,39 +565,6 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     return count == 0 ? 0 : total / count;
   }
 
-  void _sampleBrightness() {
-    if (!_isMonitoring) return;
-
-    // نمونه‌برداری همیشه انجام می‌شود، چه چهره شناسایی شده باشد چه نه
-    _brightnessHistory.add(_latestBrightness.toInt());
-
-    if (_brightnessHistory.length > windowSize) {
-      _brightnessHistory.removeAt(0);
-    }
-
-    _updateWaveform(_latestBrightness);
-
-    _frameCount++;
-
-    if (_frameCount % 10 == 0) {
-      _debugNotifier.value = _debugError ??
-          'فریم دوربین: $_cameraFrameCount | نمونه: ${_brightnessHistory.length}/$windowSize | روشنایی: ${_latestBrightness.toStringAsFixed(1)}';
-    }
-
-    if (_frameCount % recalcIntervalFrames == 0 &&
-        _brightnessHistory.length >= windowSize) {
-      final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
-
-      if (computed > 0 && mounted) {
-        setState(() {
-          _heartRate = _heartRate == 0
-              ? computed
-              : ((_heartRate * 0.6) + (computed * 0.4)).round();
-        });
-      }
-    }
-  }
-
   void _updateWaveform(double value) {
     _recentRawSamples.add(value);
     if (_recentRawSamples.length > _waveformShortWindow) {
@@ -630,7 +661,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _watchdogTimer?.cancel();
     if (_isStreaming) {
       _controller?.stopImageStream();
     }
@@ -755,7 +786,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     if (_initError != null) {
       return Column(
         children: [
-          Icon(Icons.error_outline, color: Colors.red, size: 48),
+          const Icon(Icons.error_outline, color: Colors.red, size: 48),
           const SizedBox(height: 8),
           Text(
             _initError!,
@@ -855,3 +886,4 @@ class _WaveformPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _WaveformPainter oldDelegate) => true;
 }
+
