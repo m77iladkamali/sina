@@ -121,7 +121,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
   static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
   static const int _waveformShortWindow = 30; // ~۱ ثانیه، برای محاسبه‌ی میانگین کوتاه‌مدت
-  final List<double> _waveformBuffer = List<double>.filled(waveformLength, 0);
+  // growable: true ضروری است چون بعداً با removeAt/add به آن عنصر اضافه و حذف می‌کنیم؛
+  // خروجی List<double>.filled(...) به‌صورت پیش‌فرض fixed-length است و اجازه‌ی
+  // removeAt نمی‌دهد (همان خطای "Cannot remove from a fixed-length list").
+  final List<double> _waveformBuffer =
+      List<double>.filled(waveformLength, 0, growable: true);
   final List<double> _recentRawSamples = [];
   final ValueNotifier<List<double>> _waveformNotifier =
       ValueNotifier<List<double>>(List<double>.filled(waveformLength, 0));
