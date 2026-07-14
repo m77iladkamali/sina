@@ -101,7 +101,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   // اندازه‌گیری ضربان قلب و موج بدون آن هم کار می‌کنند.
   late final FaceDetector _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.accurate,
+      performanceMode: FaceDetectorMode.fast,
       enableClassification: true,
       enableTracking: false,
     ),
@@ -116,8 +116,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   bool _rightEyeOpen = true;
   int _leftBlinkCount = 0;
   int _rightBlinkCount = 0;
-  static const double _eyeClosedThreshold = 0.4;
-  static const double _eyeOpenThreshold = 0.55;
+  static const double _eyeClosedThreshold = 0.5;
+  static const double _eyeOpenThreshold = 0.5;
 
   // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
   static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
@@ -268,9 +268,8 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _recentFilteredSamples.clear();
       _ampHistoryBuffer.clear();
       _samplesSinceLastBeat = 999;
-      _lastBeatIntervalSamples = 0;
-      _pulsePhase = 1.0;
-      _pulseStepPerSample = 0.05;
+      _pulsePhase = 0.0;
+      _pulseStepPerSample = 1.0 / ((sampleRate * 60) / 75);
       _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
       _waveformNotifier.value = List<double>.from(_waveformBuffer);
       _cameraFrameCount = 0;
@@ -439,29 +438,53 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
   }
 
+  // حداقل فاصله‌ی زمانی بین دو پلک متوالی برای هر چشم (میلی‌ثانیه)، تا نوسان
+  // ریز probability دور آستانه باعث شمارش تکراری یک پلک واحد نشود.
+  static const int _minBlinkIntervalMs = 120;
+  DateTime? _lastLeftBlinkTime;
+  DateTime? _lastRightBlinkTime;
+
+  // پلک اکنون در لحظه‌ی «بسته شدن» شمرده می‌شود، نه لحظه‌ی «باز شدن دوباره».
+  // این تغییر مهم است چون لحظه‌ی عبور از باز به بسته را با اولین فریمی که
+  // probability از آستانه رد می‌شود می‌گیریم - نیازی نیست منتظر بمانیم تا
+  // چشم دوباره کاملاً باز شود، که برای پلک‌های خیلی سریع ممکن است دیرتر از
+  // پنجره‌ی throttling تشخیص چهره برسد و پلک را از دست بدهیم.
   void _updateBlinkState(Face face) {
     final leftProb = face.leftEyeOpenProbability;
     final rightProb = face.rightEyeOpenProbability;
+    final now = DateTime.now();
 
     bool changed = false;
 
     if (leftProb != null) {
       if (_leftEyeOpen && leftProb < _eyeClosedThreshold) {
         _leftEyeOpen = false;
-      } else if (!_leftEyeOpen && leftProb > _eyeOpenThreshold) {
+        final okToCount = _lastLeftBlinkTime == null ||
+            now.difference(_lastLeftBlinkTime!).inMilliseconds >=
+                _minBlinkIntervalMs;
+        if (okToCount) {
+          _leftBlinkCount++;
+          _lastLeftBlinkTime = now;
+          changed = true;
+        }
+      } else if (!_leftEyeOpen && leftProb >= _eyeOpenThreshold) {
         _leftEyeOpen = true;
-        _leftBlinkCount++;
-        changed = true;
       }
     }
 
     if (rightProb != null) {
       if (_rightEyeOpen && rightProb < _eyeClosedThreshold) {
         _rightEyeOpen = false;
-      } else if (!_rightEyeOpen && rightProb > _eyeOpenThreshold) {
+        final okToCount = _lastRightBlinkTime == null ||
+            now.difference(_lastRightBlinkTime!).inMilliseconds >=
+                _minBlinkIntervalMs;
+        if (okToCount) {
+          _rightBlinkCount++;
+          _lastRightBlinkTime = now;
+          changed = true;
+        }
+      } else if (!_rightEyeOpen && rightProb >= _eyeOpenThreshold) {
         _rightEyeOpen = true;
-        _rightBlinkCount++;
-        changed = true;
       }
     }
 
@@ -656,24 +679,25 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   double _filteredAcValue = 0;
   bool _filterInitialized = false;
 
-  // === تشخیص لحظه‌ای قله (real-time peak detection) ===
-  // به‌جای رسم مستقیم سیگنال خام فیلترشده (که دامنه‌اش نویزی و نامنظم است)،
-  // هر ضربان واقعی را که در سیگنال رخ می‌دهد شناسایی می‌کنیم و یک شکل‌موج
-  // استاندارد PPG (صعود تند + فرود نرم، با ارتفاع همیشه یکسان) را دقیقاً در
-  // همان لحظه‌ی زمانی واقعی رسم می‌کنیم. این یعنی فاصله‌ی افقی قله‌ها همیشه
-  // صادقانه از زمان‌بندی واقعی ضربان می‌آید، ولی ارتفاعشان یکنواخت و خوانا است.
+  // === موتور ریتم موج: پیس‌میکر مستقل + همگام‌سازی جزئی فاز ===
+  // به‌جای اینکه سرعت پالس هر بار به‌طور کامل از فاصله‌ی خام بین دو قله‌ی
+  // تشخیص‌داده‌شده (که می‌تواند نویزی و نامنظم باشد) بازتعیین شود، یک ریتم
+  // پایه‌ی پایدار بر اساس BPM محاسبه‌شده (که خودش میانگین‌گیری‌شده و باثبات
+  // است) تولید می‌کنیم. سپس هر قله‌ی واقعی که در سیگنال شناسایی می‌شود فقط
+  // فاز را کمی به‌سمت لحظه‌ی واقعی می‌کشد (شبیه یک Phase-Locked Loop ساده) -
+  // نتیجه: ریتمی که هم به ضربان واقعی نزدیک است هم بسیار منظم‌تر از قبل.
   final List<double> _recentFilteredSamples = [];
   final List<double> _ampHistoryBuffer = []; // برای محاسبه‌ی آستانه‌ی تطبیقی، مستقل از موج نمایشی
   static const int _ampHistoryWindow = 20;
   static const int _peakDetectWindow = 5; // نیم‌پنجره برای تشخیص کمینه/بیشینه‌ی محلی
   int _samplesSinceLastBeat = 999;
-  int _lastBeatIntervalSamples = 0;
   static const int _minSamplesBetweenBeats =
       (sampleRate * 60) ~/ 220; // حداقل فاصله معادل سقف فیزیولوژیک ۲۲۰ BPM
 
-  // فاز پالس مصنوعی در حال رسم (۰ = شروع صعود، ۱ = پایان یک سیکل کامل)
-  double _pulsePhase = 1.0;
-  double _pulseStepPerSample = 0.05;
+  // فاز پالس در حال رسم (۰ = شروع صعود، ۱ = پایان یک سیکل کامل)
+  double _pulsePhase = 0.0;
+  // گام فاز پیش‌فرض بر اساس یک ضربان معقول (۷۵ BPM) تا پیش از محاسبه‌ی اولین BPM هم موج حرکت کند
+  double _pulseStepPerSample = 1.0 / ((sampleRate * 60) / 75);
 
   void _updateWaveform(double value) {
     _recentRawSamples.add(value);
@@ -697,7 +721,14 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _filteredAcValue = _filteredAcValue + alpha * (acValue - _filteredAcValue);
     }
 
-    // --- تشخیص قله‌ی محلی روی سیگنال فیلترشده ---
+    // گام فاز پایه همیشه از BPM محاسبه‌شده (پایدار) می‌آید - این ریتم اصلی موج را می‌سازد
+    if (_heartRate > 0) {
+      final targetStep = 1.0 / ((sampleRate * 60) / _heartRate);
+      // تغییر نرم به‌سمت گام هدف تا جهش ناگهانی BPM باعث پرش دیداری نشود
+      _pulseStepPerSample += (targetStep - _pulseStepPerSample) * 0.05;
+    }
+
+    // --- تشخیص قله‌ی محلی روی سیگنال فیلترشده (فقط برای اصلاح فاز، نه سرعت) ---
     _recentFilteredSamples.add(_filteredAcValue);
     if (_recentFilteredSamples.length > _peakDetectWindow * 2 + 1) {
       _recentFilteredSamples.removeAt(0);
@@ -728,27 +759,23 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
           hasMeaningfulAmplitude &&
           _samplesSinceLastBeat >= _minSamplesBetweenBeats) {
         beatDetected = true;
-        _lastBeatIntervalSamples = _samplesSinceLastBeat;
         _samplesSinceLastBeat = 0;
       }
     }
 
     if (beatDetected) {
-      // فاصله‌ی زمانی واقعی بین دو ضربان اخیر (ذخیره‌شده قبل از صفر شدن شمارنده)
-      // سرعت رسم پالس بعدی را تعیین می‌کند تا شکل قله همیشه یک اندازه بماند
-      // اما فاصله‌ی افقی صادقانه از زمان واقعی بیاید، نه از BPM میانگین‌گیری‌شده.
-      final beatIntervalSamples = _lastBeatIntervalSamples > 0
-          ? _lastBeatIntervalSamples
-          : (sampleRate * 60 / (_heartRate > 0 ? _heartRate : 75)).round();
-      _pulseStepPerSample =
-          1.0 / max(6, min(60, beatIntervalSamples)).toDouble();
-      _pulsePhase = 0.0;
+      // به‌جای بازتعیین کامل فاز (که نویز peak detection را مستقیم به موج منتقل
+      // می‌کند)، فاز فقط کمی به‌سمت صفر کشیده می‌شود - همگام‌سازی نرم به‌جای جهش.
+      // اگر فاز از قبل نزدیک ابتدای سیکل بود (یعنی پیس‌میکر خودش تازه ضربان زده)
+      // این تصحیح تقریباً بی‌اثر است؛ فقط وقتی فاز واقعاً منحرف شده به‌کار می‌آید.
+      _pulsePhase *= 0.3;
     }
 
-    // پیش‌بردن فاز پالس مصنوعی؛ وقتی به انتها برسد صاف (خط پایه) می‌ماند تا ضربان بعدی
+    // پیش‌بردن فاز پالس؛ در انتهای سیکل، خودش از صفر شروع می‌شود (ریتم پیوسته و منظم)
     final pulseValue = _pulseShape(_pulsePhase);
-    if (_pulsePhase < 1.0) {
-      _pulsePhase = min(1.0, _pulsePhase + _pulseStepPerSample);
+    _pulsePhase += _pulseStepPerSample;
+    if (_pulsePhase >= 1.0) {
+      _pulsePhase -= 1.0;
     }
 
     _waveformBuffer.removeAt(0);
