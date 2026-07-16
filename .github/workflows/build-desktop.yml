@@ -1,0 +1,100 @@
+name: Build Desktop Apps
+ 
+# این ورک‌فلو به‌صورت خودکار روی هر سه پلتفرم دسکتاپ (ویندوز، مک، لینوکس) بیلد می‌گیرد.
+# هر پلتفرم روی رانر مخصوص خودش اجرا می‌شود چون Flutter امکان کراس-کامپایل مستقیم ندارد
+# (مثلاً نمی‌شود از لینوکس برای ویندوز بیلد گرفت) - برای همین سه Job جدا داریم.
+ 
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*" # با هر تگ نسخه (مثل v1.0.0) هم اجرا می‌شود
+  workflow_dispatch: {} # امکان اجرای دستی از تب Actions در گیت‌هاب
+ 
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: دریافت کد پروژه
+        uses: actions/checkout@v4
+ 
+      - name: نصب Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version-file: pubspec.yaml
+ 
+      - name: فعال‌سازی پشتیبانی ویندوز
+        run: flutter config --enable-windows-desktop
+ 
+      - name: نصب وابستگی‌های پروژه
+        run: flutter pub get
+ 
+      - name: بیلد نسخه‌ی ریلیز ویندوز
+        run: flutter build windows --release
+ 
+      - name: بارگذاری خروجی به‌عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: build/windows/x64/runner/Release/
+ 
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: دریافت کد پروژه
+        uses: actions/checkout@v4
+ 
+      - name: نصب Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version-file: pubspec.yaml
+ 
+      - name: فعال‌سازی پشتیبانی مک
+        run: flutter config --enable-macos-desktop
+ 
+      - name: نصب وابستگی‌های پروژه
+        run: flutter pub get
+ 
+      - name: بیلد نسخه‌ی ریلیز مک
+        run: flutter build macos --release
+ 
+      - name: بارگذاری خروجی به‌عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: build/macos/Build/Products/Release/
+ 
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: دریافت کد پروژه
+        uses: actions/checkout@v4
+ 
+      - name: نصب پیش‌نیازهای سیستمی لینوکس
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+ 
+      - name: نصب Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version-file: pubspec.yaml
+ 
+      - name: فعال‌سازی پشتیبانی لینوکس
+        run: flutter config --enable-linux-desktop
+ 
+      - name: نصب وابستگی‌های پروژه
+        run: flutter pub get
+ 
+      - name: بیلد نسخه‌ی ریلیز لینوکس
+        run: flutter build linux --release
+ 
+      - name: بارگذاری خروجی به‌عنوان Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: build/linux/x64/release/bundle/
+ 
