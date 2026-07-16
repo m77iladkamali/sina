@@ -32,7 +32,7 @@ dev_dependencies:
  
 flutter_launcher_icons:
   android: true
-  ios: true
+  ios: false # فولدر ios/ در این مخزن اسکلت‌بندی نشده؛ فعلاً فقط اندروید و دسکتاپ هدف است
   image_path: "assets/images/sina1.png"
  
 flutter:
