@@ -22,7 +22,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
-          flutter-version-file: pubspec.yaml
  
       - name: فعال‌سازی پشتیبانی ویندوز
         run: flutter config --enable-windows-desktop
@@ -49,7 +48,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
-          flutter-version-file: pubspec.yaml
  
       - name: فعال‌سازی پشتیبانی مک
         run: flutter config --enable-macos-desktop
@@ -81,7 +79,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: "stable"
-          flutter-version-file: pubspec.yaml
  
       - name: فعال‌سازی پشتیبانی لینوکس
         run: flutter config --enable-linux-desktop
