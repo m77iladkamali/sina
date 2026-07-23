@@ -7,10 +7,10 @@ import 'package:camera/camera.dart';
 import 'face_detector_interface.dart';
 import 'face_detector_mobile.dart';
 import 'face_detector_desktop.dart';
- 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
- 
+
   try {
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
@@ -22,10 +22,10 @@ void main() async {
     runApp(ErrorApp(message: 'خطا در دسترسی به دوربین: $e'));
   }
 }
- 
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
- 
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -39,11 +39,11 @@ class MyApp extends StatelessWidget {
     );
   }
 }
- 
+
 class ErrorApp extends StatelessWidget {
   final String message;
   const ErrorApp({super.key, required this.message});
- 
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -59,7 +59,7 @@ class ErrorApp extends StatelessWidget {
     );
   }
 }
- 
+
 // ناحیه‌ی مستطیلی ساده برای مشخص کردن محدوده‌ی نمونه‌برداری روشنایی روی فریم خام دوربین
 class _Roi {
   final int left;
@@ -68,33 +68,33 @@ class _Roi {
   final int height;
   const _Roi(this.left, this.top, this.width, this.height);
 }
- 
+
 class HeartRateMonitorScreen extends StatefulWidget {
   const HeartRateMonitorScreen({super.key});
- 
+
   @override
   State<HeartRateMonitorScreen> createState() =>
       _HeartRateMonitorScreenState();
 }
- 
+
 class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   CameraController? _controller;
   bool _isMonitoring = false;
   int _heartRate = 0;
   final List<int> _brightnessHistory = [];
   int _frameCount = 0;
- 
+
   bool _isProcessingFrame = false;
   bool _isStreaming = false;
- 
+
   // وضعیت راه‌اندازی دوربین
   String? _initError;
- 
+
   // === واچ‌داگ: تشخیص قطعی این‌که آیا استریم دوربین اصلاً فریمی می‌رساند یا نه ===
   Timer? _watchdogTimer;
-  int _lastWatchdogFrameCount = -1;
+  int _lastWatchdogFrameCount = 0;
   static const int _watchdogTimeoutSeconds = 3;
- 
+
   // تشخیص چهره + طبقه‌بندی (برای احتمال باز/بسته بودن چشم‌ها).
   // بر اساس پلتفرم در initState انتخاب می‌شود: موبایل از ML Kit، دسکتاپ از
   // face_detection_tflite استفاده می‌کند - هر دو پشت یک اینترفیس یکسان.
@@ -106,65 +106,71 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
   Rect? _lastFaceRect;
   int _framesSinceFaceSeen = 0;
   bool _faceDetected = false;
- 
+
   // وضعیت و شمارش پلک زدن
+  // نکته: این متغیرها با مختصات آناتومیک ML Kit مطابقت دارند (چپ = چشم چپ خود فرد).
+  // چون دوربین جلو معمولاً پیش‌نمایش را آینه‌ای نشان می‌دهد، از دید کاربر روی صفحه
+  // چپ و راست جابه‌جا دیده می‌شوند. در UI برچسب‌ها را با متغیرها هماهنگ نگه داشته‌ایم
+  // تا از سردرگمی جلوگیری شود - اگر خواستید مطابق دید کاربر برچسب بزنید، فقط
+  // متن Text ها را جابه‌جا کنید.
   bool _leftEyeOpen = true;
   bool _rightEyeOpen = true;
   int _leftBlinkCount = 0;
   int _rightBlinkCount = 0;
   static const double _eyeClosedThreshold = 0.5;
   static const double _eyeOpenThreshold = 0.5;
- 
+
   // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
   static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
   static const int _waveformShortWindow = 30; // ~۱ ثانیه، برای محاسبه‌ی میانگین کوتاه‌مدت
-  // growable: true ضروری است چون بعداً با removeAt/add به آن عنصر اضافه و حذف می‌کنیم؛
-  // خروجی List<double>.filled(...) به‌صورت پیش‌فرض fixed-length است و اجازه‌ی
-  // removeAt نمی‌دهد (همان خطای "Cannot remove from a fixed-length list").
   final List<double> _waveformBuffer =
       List<double>.filled(waveformLength, 0, growable: true);
   final List<double> _recentRawSamples = [];
   final ValueNotifier<List<double>> _waveformNotifier =
       ValueNotifier<List<double>>(List<double>.filled(waveformLength, 0));
   final ValueNotifier<String> _debugNotifier = ValueNotifier<String>('');
- 
+
   // فیلدهای دیباگ - برای تشخیص این‌که مسیر پردازش فریم دقیقاً کجا متوقف می‌شود
   int _cameraFrameCount = 0;
   String? _debugError;
- 
+
   // تنظیمات الگوریتم
-  static const int sampleRate = 30; // ۳۰ نمونه در ثانیه (تقریبی - نرخ واقعی فریم دوربین است)
-  static const int windowSize = 240; // ~۸ ثانیه داده (برای دقت بهتر در تشخیص فرکانس)
-  static const int recalcIntervalFrames = sampleRate * 3; // هر ~۳ ثانیه یک‌بار محاسبه‌ی مجدد
- 
+  static const int sampleRate = 30;
+  static const int windowSize = 240;
+  static const int recalcIntervalFrames = sampleRate * 3;
+
+  // گام فاز پیش‌فرض بر اساس ۷۵ BPM: تعداد سیکل بر نمونه = BPM / (sampleRate * 60)
+  static const double _defaultPulseStep = 75 / (sampleRate * 60);
+
   @override
   void initState() {
     super.initState();
-    _initFaceDetector();
-    _initCamera();
+    _initServices();
   }
- 
+
+  // هر دو سرویس را موازی راه‌اندازی می‌کنیم تا زمان استارت‌آپ کمتر شود
+  Future<void> _initServices() async {
+    await Future.wait([
+      _initFaceDetector(),
+      _initCamera(),
+    ]);
+  }
+
   Future<void> _initFaceDetector() async {
     try {
       await _faceDetector.initialize();
       _faceDetectorReady = true;
     } catch (e) {
-      // اگر راه‌اندازی تشخیص چهره شکست بخورد (مثلاً مدل TFLite لود نشود)،
-      // برنامه بدون آن هم کار می‌کند - فقط پلک‌شمار و قفل ROI پیشونی غیرفعال می‌ماند.
       debugPrint('خطا در راه‌اندازی تشخیص چهره (نادیده گرفته شد): $e');
       _faceDetectorReady = false;
     }
   }
- 
-  // راه‌اندازی دوربین با افت خودکار (fallback) بین فرمت‌های تصویر:
-  // ابتدا فرمت سازگار با تشخیص چهره امتحان می‌شود؛ اگر دستگاه آن را پشتیبانی نکند
-  // (initialize شکست بخورد)، به فرمت پایه‌ای‌تر که مطمئناً کار می‌کند برمی‌گردیم.
-  // در هر دو حالت، اندازه‌گیری ضربان قلب و موج کار می‌کند - فقط تشخیص چهره ممکن است غیرفعال شود.
+
   Future<void> _initCamera() async {
     setState(() {
       _initError = null;
     });
- 
+
     List<CameraDescription> cameras;
     try {
       cameras = await availableCameras();
@@ -172,26 +178,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       if (mounted) setState(() => _initError = 'خطا در دسترسی به دوربین‌ها: $e');
       return;
     }
- 
+
     if (cameras.isEmpty) {
       if (mounted) setState(() => _initError = 'هیچ دوربینی پیدا نشد');
       return;
     }
- 
+
     final frontCamera = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.front,
       orElse: () => cameras.first,
     );
- 
-    // نکته‌ی مهم: روی برخی دستگاه‌های اندروید ترکیب nv21 + ResolutionPreset.low
-    // باعث شکست خاموش initialize یا عدم رسیدن فریم از پلتفرم چنل می‌شود.
-    // yuv420 پایدارترین فرمت روی تقریباً همه‌ی دستگاه‌های اندروید است، برای همین
-    // آن را هم به‌عنوان گزینه‌ی اول امتحان می‌کنیم (چهره‌یابی چندپلین را غیرفعال می‌کند
-    // ولی اندازه‌گیری ضربان قلب کاملاً مستقل از آن کار می‌کند).
+
     final formatsToTry = Platform.isAndroid
         ? [ImageFormatGroup.yuv420, ImageFormatGroup.nv21]
         : [ImageFormatGroup.bgra8888];
- 
+
     Object? lastError;
     for (final format in formatsToTry) {
       try {
@@ -202,39 +203,38 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
           imageFormatGroup: format,
         );
         await controller.initialize();
- 
+
         try {
           await controller.setFocusMode(FocusMode.locked);
         } catch (_) {}
         try {
           await controller.setExposureMode(ExposureMode.locked);
         } catch (_) {}
- 
+
         if (!mounted) {
           await controller.dispose();
           return;
         }
- 
+
         _controller = controller;
- 
+
         setState(() {
           _initError = null;
         });
-        return; // موفق شد - از تابع خارج می‌شویم
+        return;
       } catch (e) {
         lastError = e;
         debugPrint('خطا در راه‌اندازی دوربین با فرمت $format: $e');
       }
     }
- 
-    // اگر همه‌ی فرمت‌های ممکن شکست خوردند
+
     if (mounted) {
       setState(() {
         _initError = 'راه‌اندازی دوربین ناموفق بود.\n$lastError';
       });
     }
   }
- 
+
   void _toggleMonitoring() {
     if (_controller == null || !_controller!.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -248,10 +248,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _startMonitoring();
     }
   }
- 
+
   Future<void> _startMonitoring() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
- 
+
     try {
       _isMonitoring = true;
       _brightnessHistory.clear();
@@ -271,29 +271,27 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _ampHistoryBuffer.clear();
       _samplesSinceLastBeat = 999;
       _pulsePhase = 0.0;
-      _pulseStepPerSample = 1.0 / ((sampleRate * 60) / 75);
+      _pulseStepPerSample = _defaultPulseStep;
       _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
       _waveformNotifier.value = List<double>.from(_waveformBuffer);
       _cameraFrameCount = 0;
       _debugError = null;
       _debugNotifier.value = 'در حال شروع دریافت فریم از دوربین...';
- 
+
       if (!_isStreaming) {
         await _controller!.startImageStream(_onCameraImage);
         _isStreaming = true;
       }
- 
-      // واچ‌داگ: هر چند ثانیه بررسی می‌کند که آیا شمارنده‌ی فریم واقعاً پیش می‌رود.
-      // اگر پیش نرود یعنی startImageStream روی این دستگاه فریمی نمی‌رساند
-      // (معمولاً به‌خاطر مجوز دوربین، اشغال بودن دوربین توسط برنامه‌ی دیگر، یا
-      // ناسازگاری فرمت تصویر روی آن دستگاه‌ی خاص).
-      _lastWatchdogFrameCount = -1;
+
+      // مقدار اولیه را 0 می‌گذاریم (نه -1) تا اولین تیک واچ‌داگ (بعد از ۳ ثانیه)
+      // اگر هیچ فریمی نرسیده باشد، فوراً خطا نمایش دهد
+      _lastWatchdogFrameCount = 0;
       _watchdogTimer?.cancel();
       _watchdogTimer = Timer.periodic(
         const Duration(seconds: _watchdogTimeoutSeconds),
         (_) => _checkStreamHealth(),
       );
- 
+
       if (mounted) setState(() {});
     } catch (e) {
       _debugError = 'خطا در شروع پایش: $e';
@@ -307,11 +305,10 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       }
     }
   }
- 
+
   void _checkStreamHealth() {
     if (!_isMonitoring) return;
     if (_cameraFrameCount == _lastWatchdogFrameCount) {
-      // در ۳ ثانیه‌ی اخیر حتی یک فریم هم از دوربین نرسیده است.
       _debugError = 'هیچ فریمی از دوربین دریافت نمی‌شود.\n'
           'دوربین ممکن است توسط برنامه‌ی دیگری در حال استفاده باشد،\n'
           'یا مجوز دوربین به‌درستی اعطا نشده باشد.';
@@ -320,52 +317,52 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     _lastWatchdogFrameCount = _cameraFrameCount;
   }
- 
+
   Future<void> _stopMonitoring() async {
     _isMonitoring = false;
     _watchdogTimer?.cancel();
     _watchdogTimer = null;
     _heartRate = 0;
- 
+
     if (_isStreaming && _controller != null) {
       try {
         await _controller!.stopImageStream();
       } catch (_) {}
       _isStreaming = false;
     }
- 
+
+    // پاک‌سازی نمای موج و پیام دیباگ تا در آخرین حالت فریز نمانند
+    _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
+    _waveformNotifier.value = List<double>.from(_waveformBuffer);
+    _debugError = null;
+    _debugNotifier.value = '';
+
     if (mounted) setState(() {});
   }
- 
-  // نمونه‌برداری اکنون مستقیماً داخل کال‌بک استریم دوربین انجام می‌شود، نه یک
-  // Timer.periodic جدا. این تضمین می‌کند که نرخ نمونه‌برداری دقیقاً با نرخ
-  // واقعی فریم دوربین هماهنگ باشد و اگر فریمی نرسد، ما هم منتظر آن نمی‌مانیم
-  // (به‌جای این‌که تایمر جدا هر بار روی همان مقدار قدیمی brightness کار کند).
+
   void _onCameraImage(CameraImage image) {
     if (!_isMonitoring) return;
- 
+
     _cameraFrameCount++;
- 
-    // تشخیص چهره از طریق سرویس انتزاعی (ML Kit روی موبایل، face_detection_tflite
-    // روی دسکتاپ) - فقط وقتی سرویس با موفقیت راه‌اندازی شده باشد اجرا می‌شود.
+
     if (_faceDetectorReady && !_isDetectingFace) {
       _isDetectingFace = true;
       _detectFaceAndUpdateRoi(image);
     }
- 
+
     if (_isProcessingFrame) return;
     _isProcessingFrame = true;
- 
+
     double brightness = 0;
     try {
       final roi = _lastFaceRect != null
           ? _foreheadRoiFromFace(_lastFaceRect!, image.width, image.height)
           : _centerRoi(image.width, image.height);
- 
+
       brightness = Platform.isAndroid
           ? _averageBrightnessYPlane(image, roi)
           : _averageBrightnessBGRA(image, roi);
- 
+
       _handleNewBrightnessSample(brightness);
     } catch (e) {
       _debugError = 'خطا در پردازش فریم: $e';
@@ -375,26 +372,26 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _isProcessingFrame = false;
     }
   }
- 
+
   void _handleNewBrightnessSample(double brightness) {
     _brightnessHistory.add(brightness.toInt());
     if (_brightnessHistory.length > windowSize) {
       _brightnessHistory.removeAt(0);
     }
- 
+
     _updateWaveform(brightness);
- 
+
     _frameCount++;
- 
+
     if (_frameCount % 10 == 0) {
       _debugNotifier.value = _debugError ??
           'فریم دوربین: $_cameraFrameCount | نمونه: ${_brightnessHistory.length}/$windowSize | روشنایی: ${brightness.toStringAsFixed(1)}';
     }
- 
+
     if (_frameCount % recalcIntervalFrames == 0 &&
         _brightnessHistory.length >= windowSize) {
       final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
- 
+
       if (computed > 0 && mounted) {
         setState(() {
           _heartRate = _heartRate == 0
@@ -404,14 +401,14 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       }
     }
   }
- 
+
   Future<void> _detectFaceAndUpdateRoi(CameraImage image) async {
     try {
       final camera = _controller?.description;
       if (camera == null) return;
- 
+
       final faces = await _faceDetector.detectFaces(image, camera);
- 
+
       if (faces.isNotEmpty) {
         faces.sort((a, b) => (b.width * b.height).compareTo(a.width * a.height));
         final face = faces.first;
@@ -431,31 +428,23 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         }
       }
     } catch (e) {
-      // تشخیص چهره اختیاری است؛ خطای آن نباید اندازه‌گیری اصلی را متوقف کند
       debugPrint('خطا در تشخیص چهره (نادیده گرفته شد): $e');
     } finally {
       _isDetectingFace = false;
     }
   }
- 
-  // حداقل فاصله‌ی زمانی بین دو پلک متوالی برای هر چشم (میلی‌ثانیه)، تا نوسان
-  // ریز probability دور آستانه باعث شمارش تکراری یک پلک واحد نشود.
+
   static const int _minBlinkIntervalMs = 120;
   DateTime? _lastLeftBlinkTime;
   DateTime? _lastRightBlinkTime;
- 
-  // پلک اکنون در لحظه‌ی «بسته شدن» شمرده می‌شود، نه لحظه‌ی «باز شدن دوباره».
-  // این تغییر مهم است چون لحظه‌ی عبور از باز به بسته را با اولین فریمی که
-  // probability از آستانه رد می‌شود می‌گیریم - نیازی نیست منتظر بمانیم تا
-  // چشم دوباره کاملاً باز شود، که برای پلک‌های خیلی سریع ممکن است دیرتر از
-  // پنجره‌ی throttling تشخیص چهره برسد و پلک را از دست بدهیم.
+
   void _updateBlinkState(FaceResult face) {
     final leftProb = face.leftEyeOpenProbability;
     final rightProb = face.rightEyeOpenProbability;
     final now = DateTime.now();
- 
+
     bool changed = false;
- 
+
     if (leftProb != null) {
       if (_leftEyeOpen && leftProb < _eyeClosedThreshold) {
         _leftEyeOpen = false;
@@ -471,7 +460,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         _leftEyeOpen = true;
       }
     }
- 
+
     if (rightProb != null) {
       if (_rightEyeOpen && rightProb < _eyeClosedThreshold) {
         _rightEyeOpen = false;
@@ -487,14 +476,12 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         _rightEyeOpen = true;
       }
     }
- 
+
     if (changed && mounted) {
       setState(() {});
     }
   }
- 
- 
- 
+
   _Roi _centerRoi(int imageWidth, int imageHeight) {
     final radius = min(imageWidth, imageHeight) ~/ 4;
     return _Roi(
@@ -504,29 +491,27 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       radius * 2,
     );
   }
- 
+
   _Roi _foreheadRoiFromFace(Rect faceRect, int imageWidth, int imageHeight) {
     final faceWidth = faceRect.width;
     final faceHeight = faceRect.height;
- 
+
     final left = (faceRect.left + faceWidth * 0.30).clamp(0, imageWidth - 1).toInt();
     final top = (faceRect.top + faceHeight * 0.12).clamp(0, imageHeight - 1).toInt();
     final width = (faceWidth * 0.40).clamp(1, imageWidth - left).toInt();
     final height = (faceHeight * 0.15).clamp(1, imageHeight - top).toInt();
- 
+
     return _Roi(left, top, width, height);
   }
- 
-  // استخراج روشنایی مستقیم از صفحه‌ی Y (luminance) - کار می‌کند چه فرمت nv21 (تک-پلین)
-  // باشد چه yuv420 (سه-پلین)، چون در هر دو حالت plane نخست همان صفحه‌ی Y است
+
   double _averageBrightnessYPlane(CameraImage image, _Roi roi) {
     final plane = image.planes[0];
     final bytes = plane.bytes;
     final bytesPerRow = plane.bytesPerRow;
- 
+
     final xEnd = (roi.left + roi.width).clamp(0, image.width);
     final yEnd = (roi.top + roi.height).clamp(0, image.height);
- 
+
     double total = 0;
     int count = 0;
     for (int y = roi.top; y < yEnd; y++) {
@@ -540,15 +525,15 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     return count == 0 ? 0 : total / count;
   }
- 
+
   double _averageBrightnessBGRA(CameraImage image, _Roi roi) {
     final plane = image.planes[0];
     final bytes = plane.bytes;
     final bytesPerRow = plane.bytesPerRow;
- 
+
     final xEnd = (roi.left + roi.width).clamp(0, image.width);
     final yEnd = (roi.top + roi.height).clamp(0, image.height);
- 
+
     double total = 0;
     int count = 0;
     for (int y = roi.top; y < yEnd; y++) {
@@ -565,34 +550,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     return count == 0 ? 0 : total / count;
   }
- 
-  // ثابت‌زمانی فیلتر پایین‌گذر: مقدار آلفا طوری انتخاب شده که فرکانس قطع تقریباً
-  // ۳.۵ هرتز (معادل ۲۱۰ ضربه در دقیقه، بالاترین حد فیزیولوژیک قلب) باشد.
-  // فرمول: alpha = dt / (RC + dt) که در آن RC = 1 / (2*pi*fc)
+
   static const double _lowPassCutoffHz = 3.5;
   double _filteredAcValue = 0;
   bool _filterInitialized = false;
- 
-  // === موتور ریتم موج: پیس‌میکر مستقل + همگام‌سازی جزئی فاز ===
-  // به‌جای اینکه سرعت پالس هر بار به‌طور کامل از فاصله‌ی خام بین دو قله‌ی
-  // تشخیص‌داده‌شده (که می‌تواند نویزی و نامنظم باشد) بازتعیین شود، یک ریتم
-  // پایه‌ی پایدار بر اساس BPM محاسبه‌شده (که خودش میانگین‌گیری‌شده و باثبات
-  // است) تولید می‌کنیم. سپس هر قله‌ی واقعی که در سیگنال شناسایی می‌شود فقط
-  // فاز را کمی به‌سمت لحظه‌ی واقعی می‌کشد (شبیه یک Phase-Locked Loop ساده) -
-  // نتیجه: ریتمی که هم به ضربان واقعی نزدیک است هم بسیار منظم‌تر از قبل.
+
   final List<double> _recentFilteredSamples = [];
-  final List<double> _ampHistoryBuffer = []; // برای محاسبه‌ی آستانه‌ی تطبیقی، مستقل از موج نمایشی
+  final List<double> _ampHistoryBuffer = [];
   static const int _ampHistoryWindow = 20;
-  static const int _peakDetectWindow = 5; // نیم‌پنجره برای تشخیص کمینه/بیشینه‌ی محلی
+  static const int _peakDetectWindow = 5;
   int _samplesSinceLastBeat = 999;
-  static const int _minSamplesBetweenBeats =
-      (sampleRate * 60) ~/ 220; // حداقل فاصله معادل سقف فیزیولوژیک ۲۲۰ BPM
- 
-  // فاز پالس در حال رسم (۰ = شروع صعود، ۱ = پایان یک سیکل کامل)
+  static const int _minSamplesBetweenBeats = (sampleRate * 60) ~/ 220;
+
   double _pulsePhase = 0.0;
-  // گام فاز پیش‌فرض بر اساس یک ضربان معقول (۷۵ BPM) تا پیش از محاسبه‌ی اولین BPM هم موج حرکت کند
-  double _pulseStepPerSample = 1.0 / ((sampleRate * 60) / 75);
- 
+  double _pulseStepPerSample = _defaultPulseStep;
+
   void _updateWaveform(double value) {
     _recentRawSamples.add(value);
     if (_recentRawSamples.length > _waveformShortWindow) {
@@ -601,28 +573,25 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     final localMean =
         _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
     final acValue = value - localMean;
- 
-    // فیلتر پایین‌گذر تک‌قطبی (one-pole low-pass) برای حذف نویز فرکانس‌بالا
-    // (لرزش دست، نویز حسگر) بدون از بین بردن شکل قله‌های ضربان قلب
+
     final dt = 1.0 / sampleRate;
     final rc = 1.0 / (2 * pi * _lowPassCutoffHz);
     final alpha = dt / (rc + dt);
- 
+
     if (!_filterInitialized) {
       _filteredAcValue = acValue;
       _filterInitialized = true;
     } else {
       _filteredAcValue = _filteredAcValue + alpha * (acValue - _filteredAcValue);
     }
- 
-    // گام فاز پایه همیشه از BPM محاسبه‌شده (پایدار) می‌آید - این ریتم اصلی موج را می‌سازد
+
+    // گام فاز پایه از BPM محاسبه‌شده می‌آید (پایدار)
     if (_heartRate > 0) {
-      final targetStep = 1.0 / ((sampleRate * 60) / _heartRate);
-      // تغییر نرم به‌سمت گام هدف تا جهش ناگهانی BPM باعث پرش دیداری نشود
+      // تعداد سیکل بر نمونه = BPM / (sampleRate * 60)
+      final targetStep = _heartRate / (sampleRate * 60);
       _pulseStepPerSample += (targetStep - _pulseStepPerSample) * 0.05;
     }
- 
-    // --- تشخیص قله‌ی محلی روی سیگنال فیلترشده (فقط برای اصلاح فاز، نه سرعت) ---
+
     _recentFilteredSamples.add(_filteredAcValue);
     if (_recentFilteredSamples.length > _peakDetectWindow * 2 + 1) {
       _recentFilteredSamples.removeAt(0);
@@ -632,7 +601,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       _ampHistoryBuffer.removeAt(0);
     }
     _samplesSinceLastBeat++;
- 
+
     bool beatDetected = false;
     if (_recentFilteredSamples.length == _peakDetectWindow * 2 + 1) {
       final mid = _recentFilteredSamples[_peakDetectWindow];
@@ -644,11 +613,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
           break;
         }
       }
-      // آستانه‌ی دامنه‌ی تطبیقی: به‌جای مقدار ثابت، بر اساس انحراف معیار سیگنال
-      // اخیر محاسبه می‌شود تا با شرایط نوری مختلف (نور کم/زیاد) خودش را وفق دهد
       final amplitudeThreshold = _adaptiveAmplitudeThreshold();
       final hasMeaningfulAmplitude = mid.abs() > amplitudeThreshold;
- 
+
       if (isLocalMax &&
           hasMeaningfulAmplitude &&
           _samplesSinceLastBeat >= _minSamplesBetweenBeats) {
@@ -656,34 +623,28 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         _samplesSinceLastBeat = 0;
       }
     }
- 
+
     if (beatDetected) {
-      // به‌جای بازتعیین کامل فاز (که نویز peak detection را مستقیم به موج منتقل
-      // می‌کند)، فاز فقط کمی به‌سمت صفر کشیده می‌شود - همگام‌سازی نرم به‌جای جهش.
-      // اگر فاز از قبل نزدیک ابتدای سیکل بود (یعنی پیس‌میکر خودش تازه ضربان زده)
-      // این تصحیح تقریباً بی‌اثر است؛ فقط وقتی فاز واقعاً منحرف شده به‌کار می‌آید.
       _pulsePhase *= 0.3;
     }
- 
-    // پیش‌بردن فاز پالس؛ در انتهای سیکل، خودش از صفر شروع می‌شود (ریتم پیوسته و منظم)
+
     final pulseValue = _pulseShape(_pulsePhase);
     _pulsePhase += _pulseStepPerSample;
     if (_pulsePhase >= 1.0) {
       _pulsePhase -= 1.0;
     }
- 
+
     _waveformBuffer.removeAt(0);
     _waveformBuffer.add(pulseValue);
     _waveformNotifier.value = List<double>.from(_waveformBuffer);
   }
- 
-  // شکل استاندارد یک پالس PPG: صعود تیز (شتاب‌گیرنده تا لحظه‌ی آخر، بدون گرد شدن
-  // نزدیک قله) سپس فرود نرم‌تر با یک دندانه‌ی کوچک ثانویه (dicrotic notch) شبیه
-  // موج واقعی نبض - ارتفاع همیشه ثابت (بین ۰ و ۱) و نوک قله همیشه تیز.
+
+  // شکل استاندارد یک پالس PPG: صعود تیز سپس فرود نرم‌تر با یک دندانه‌ی
+  // کوچک ثانویه (dicrotic notch) شبیه موج واقعی نبض
   double _pulseShape(double phase) {
     if (phase >= 1.0) return 0.0;
     if (phase < 0.15) {
-      // صعود تیز: از easeIn استفاده می‌شود تا شیب نزدیک قله صفر نشود و نوک تیز بماند
+      // صعود تیز
       final t = phase / 0.15;
       return _easeInQuad(t);
     } else if (phase < 0.45) {
@@ -691,36 +652,31 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       final t = (phase - 0.15) / 0.30;
       return 1.0 - _easeInCubic(t) * 0.65;
     } else if (phase < 0.60) {
-      // دندانه‌ی کوچک ثانویه (dicrotic notch) - مشخصه‌ی موج واقعی نبض
+      // دندانه‌ی کوچک ثانویه (dicrotic notch)
       final t = (phase - 0.45) / 0.15;
       return 0.35 + sin(t * pi) * 0.12;
     } else {
-      // بازگشت نرم به خط پایه
+      // بازگشت نرم از سطح ۰.۳۵ (انتهای dicrotic notch) به خط پایه‌ی صفر
       final t = (phase - 0.60) / 0.40;
-      return (0.35 + sin(0.0)) * (1.0 - _easeOutCubic(t));
+      return 0.35 * (1.0 - _easeOutCubic(t));
     }
   }
- 
+
   double _easeOutCubic(double t) => 1 - pow(1 - t, 3).toDouble();
   double _easeInCubic(double t) => pow(t, 3).toDouble();
   double _easeInQuad(double t) => t * t;
- 
-  // آستانه‌ی دامنه‌ی تطبیقی برای تشخیص قله: بر پایه‌ی انحراف معیار سیگنال فیلترشده‌ی
-  // اخیر (پنجره‌ی کوتاه، هم‌راستا با _waveformShortWindow). این کار باعث می‌شود
-  // در نور کم (دامنه‌ی سیگنال کوچک) قله‌های واقعی رد نشوند، و در نور شدید یا نویز
-  // زیاد، نوسانات کوچک به‌اشتباه به‌عنوان ضربان شمرده نشوند.
+
   double _adaptiveAmplitudeThreshold() {
     if (_ampHistoryBuffer.length < 10) return 0.05;
     final samples = _ampHistoryBuffer;
     final variance = samples
-            .map((v) => v * v) // سیگنال فیلترشده AC-coupled است، میانگین تقریبی صفر
+            .map((v) => v * v)
             .reduce((a, b) => a + b) /
         samples.length;
     final stdDev = sqrt(variance);
-    // حداقل ۲۵٪ انحراف معیار اخیر، با کف مطلق کوچک برای جلوگیری از حساسیت بیش از حد
     return max(0.02, stdDev * 0.25);
   }
- 
+
   List<double> _detrend(List<double> data, int halfWindow) {
     final n = data.length;
     final result = List<double>.filled(n, 0);
@@ -736,7 +692,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     return result;
   }
- 
+
   List<double> _smooth(List<double> data, int halfWindow) {
     final n = data.length;
     final result = List<double>.filled(n, 0);
@@ -751,7 +707,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     }
     return result;
   }
- 
+
   double _standardDeviation(List<double> data) {
     final mean = data.reduce((a, b) => a + b) / data.length;
     final variance =
@@ -759,21 +715,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
             data.length;
     return sqrt(variance);
   }
- 
+
   int _calculateHeartRate(List<int> brightnessData, int fps) {
     if (brightnessData.length < 30) return 0;
- 
+
     final raw = brightnessData.map((v) => v.toDouble()).toList();
     final smoothed = _smooth(raw, 1);
     final detrended = _detrend(smoothed, fps ~/ 2);
- 
+
     if (detrended.every((v) => v == 0)) return 0;
- 
+
     final stdDev = _standardDeviation(detrended);
     if (stdDev == 0) return 0;
- 
+
     final prominenceThreshold = stdDev * 0.35;
- 
+
     List<int> peaks = [];
     for (int i = 1; i < detrended.length - 1; i++) {
       if (detrended[i] > detrended[i - 1] &&
@@ -782,9 +738,9 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         peaks.add(i);
       }
     }
- 
+
     if (peaks.length < 2) return 0;
- 
+
     double avgIntervalSeconds = 0;
     int intervalsCount = 0;
     for (int i = 1; i < peaks.length; i++) {
@@ -794,13 +750,13 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         intervalsCount++;
       }
     }
- 
+
     if (intervalsCount == 0) return 0;
     avgIntervalSeconds /= intervalsCount;
- 
+
     return (60 / avgIntervalSeconds).round();
   }
- 
+
   @override
   void dispose() {
     _watchdogTimer?.cancel();
@@ -813,7 +769,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     _debugNotifier.dispose();
     super.dispose();
   }
- 
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -886,21 +842,21 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
                   Column(
                     children: [
                       Icon(
-                        _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
+                        _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
                         color: Colors.blue,
                       ),
                       const SizedBox(height: 4),
-                      Text('پلک چپ: $_rightBlinkCount'),
+                      Text('پلک چپ: $_leftBlinkCount'),
                     ],
                   ),
                   Column(
                     children: [
                       Icon(
-                        _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
+                        _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
                         color: Colors.blue,
                       ),
                       const SizedBox(height: 4),
-                      Text('پلک راست: $_leftBlinkCount'),
+                      Text('پلک راست: $_rightBlinkCount'),
                     ],
                   ),
                 ],
@@ -923,7 +879,7 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
       ),
     );
   }
- 
+
   Widget _buildCameraPreview() {
     if (_initError != null) {
       return Column(
@@ -943,11 +899,11 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
         ],
       );
     }
- 
+
     if (_controller == null || !_controller!.value.isInitialized) {
       return const CircularProgressIndicator();
     }
- 
+
     return Stack(
       alignment: Alignment.bottomCenter,
       children: [
@@ -978,12 +934,12 @@ class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
     );
   }
 }
- 
+
 // رسم موج زنده‌ی ضربان روی یک سطح تیره، شبیه مانیتورهای PPG
 class _WaveformPainter extends CustomPainter {
   final List<double> data;
   const _WaveformPainter(this.data);
- 
+
   @override
   void paint(Canvas canvas, Size size) {
     final basePaint = Paint()
@@ -994,23 +950,23 @@ class _WaveformPainter extends CustomPainter {
       Offset(size.width, size.height / 2),
       basePaint,
     );
- 
+
     if (data.length < 2) return;
- 
+
     double maxAbs = 0;
     for (final v in data) {
       final a = v.abs();
       if (a > maxAbs) maxAbs = a;
     }
     final scale = maxAbs < 0.5 ? 1.0 : (size.height / 2 - 6) / maxAbs;
- 
+
     final wavePaint = Paint()
       ..color = Colors.redAccent
       ..strokeWidth = 2.2
       ..style = PaintingStyle.stroke
       ..strokeJoin = StrokeJoin.round
       ..strokeCap = StrokeCap.round;
- 
+
     final path = Path();
     final dx = size.width / (data.length - 1);
     for (int i = 0; i < data.length; i++) {
@@ -1024,7 +980,7 @@ class _WaveformPainter extends CustomPainter {
     }
     canvas.drawPath(path, wavePaint);
   }
- 
+
   @override
   bool shouldRepaint(covariant _WaveformPainter oldDelegate) => true;
 }
