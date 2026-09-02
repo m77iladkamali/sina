@@ -1,26 +1,16 @@
 import 'dart:async';
-import 'dart:io' show Platform;
-import 'dart:math';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:camera/camera.dart';
-import 'face_detector_interface.dart';
-import 'face_detector_mobile.dart';
-import 'face_detector_desktop.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  try {
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) {
-      runApp(const ErrorApp(message: 'دوربین در دسترس نیست!'));
-      return;
-    }
-    runApp(const MyApp());
-  } catch (e) {
-    runApp(ErrorApp(message: 'خطا در دسترسی به دوربین: $e'));
-  }
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -29,958 +19,295 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'سینا - مشاور همراه',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        fontFamily: 'Far_Homa',
-      ),
-      home: const HeartRateMonitorScreen(),
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(useMaterial3: true, fontFamily: "Far_Homa"),
+      home: const WelcomePage(),
     );
   }
 }
 
-class ErrorApp extends StatelessWidget {
-  final String message;
-  const ErrorApp({super.key, required this.message});
+// ===== صفحه خوش‌آمدگویی (لوگو در وسط) =====
+class WelcomePage extends StatefulWidget {
+  const WelcomePage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: Text(
-            message,
-            style: const TextStyle(fontSize: 18, color: Colors.red),
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
-    );
-  }
+  State<WelcomePage> createState() => _WelcomePageState();
 }
 
-// ناحیه‌ی مستطیلی ساده برای مشخص کردن محدوده‌ی نمونه‌برداری روشنایی روی فریم خام دوربین
-class _Roi {
-  final int left;
-  final int top;
-  final int width;
-  final int height;
-  const _Roi(this.left, this.top, this.width, this.height);
-}
-
-class HeartRateMonitorScreen extends StatefulWidget {
-  const HeartRateMonitorScreen({super.key});
-
-  @override
-  State<HeartRateMonitorScreen> createState() =>
-      _HeartRateMonitorScreenState();
-}
-
-class _HeartRateMonitorScreenState extends State<HeartRateMonitorScreen> {
-  CameraController? _controller;
-  bool _isMonitoring = false;
-  int _heartRate = 0;
-  final List<int> _brightnessHistory = [];
-  int _frameCount = 0;
-
-  bool _isProcessingFrame = false;
-  bool _isStreaming = false;
-
-  // وضعیت راه‌اندازی دوربین
-  String? _initError;
-
-  // === واچ‌داگ: تشخیص قطعی این‌که آیا استریم دوربین اصلاً فریمی می‌رساند یا نه ===
-  Timer? _watchdogTimer;
-  int _lastWatchdogFrameCount = 0;
-  static const int _watchdogTimeoutSeconds = 3;
-
-  // تشخیص چهره + طبقه‌بندی (برای احتمال باز/بسته بودن چشم‌ها).
-  // بر اساس پلتفرم در initState انتخاب می‌شود: موبایل از ML Kit، دسکتاپ از
-  // face_detection_tflite استفاده می‌کند - هر دو پشت یک اینترفیس یکسان.
-  late final FaceDetectorService _faceDetector = (Platform.isAndroid || Platform.isIOS)
-      ? MobileFaceDetectorService()
-      : DesktopFaceDetectorService();
-  bool _faceDetectorReady = false;
-  bool _isDetectingFace = false;
-  Rect? _lastFaceRect;
-  int _framesSinceFaceSeen = 0;
-  bool _faceDetected = false;
-
-  // وضعیت و شمارش پلک زدن
-  // نکته: این متغیرها با مختصات آناتومیک ML Kit مطابقت دارند (چپ = چشم چپ خود فرد).
-  // چون دوربین جلو معمولاً پیش‌نمایش را آینه‌ای نشان می‌دهد، از دید کاربر روی صفحه
-  // چپ و راست جابه‌جا دیده می‌شوند. در UI برچسب‌ها را با متغیرها هماهنگ نگه داشته‌ایم
-  // تا از سردرگمی جلوگیری شود - اگر خواستید مطابق دید کاربر برچسب بزنید، فقط
-  // متن Text ها را جابه‌جا کنید.
-  bool _leftEyeOpen = true;
-  bool _rightEyeOpen = true;
-  int _leftBlinkCount = 0;
-  int _rightBlinkCount = 0;
-  static const double _eyeClosedThreshold = 0.5;
-  static const double _eyeOpenThreshold = 0.5;
-
-  // بافر نمایش موج زنده (نسخه‌ی AC-coupled سیگنال روشنایی، بدون افت‌وخیز آهسته)
-  static const int waveformLength = 90; // ~۳ ثانیه در نرخ ۳۰ نمونه بر ثانیه
-  static const int _waveformShortWindow = 30; // ~۱ ثانیه، برای محاسبه‌ی میانگین کوتاه‌مدت
-  final List<double> _waveformBuffer =
-      List<double>.filled(waveformLength, 0, growable: true);
-  final List<double> _recentRawSamples = [];
-  final ValueNotifier<List<double>> _waveformNotifier =
-      ValueNotifier<List<double>>(List<double>.filled(waveformLength, 0));
-  final ValueNotifier<String> _debugNotifier = ValueNotifier<String>('');
-
-  // فیلدهای دیباگ - برای تشخیص این‌که مسیر پردازش فریم دقیقاً کجا متوقف می‌شود
-  int _cameraFrameCount = 0;
-  String? _debugError;
-
-  // تنظیمات الگوریتم
-  static const int sampleRate = 30;
-  static const int windowSize = 240;
-  static const int recalcIntervalFrames = sampleRate * 3;
-
-  // گام فاز پیش‌فرض بر اساس ۷۵ BPM: تعداد سیکل بر نمونه = BPM / (sampleRate * 60)
-  static const double _defaultPulseStep = 75 / (sampleRate * 60);
+class _WelcomePageState extends State<WelcomePage>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
-    _initServices();
-  }
-
-  // هر دو سرویس را موازی راه‌اندازی می‌کنیم تا زمان استارت‌آپ کمتر شود
-  Future<void> _initServices() async {
-    await Future.wait([
-      _initFaceDetector(),
-      _initCamera(),
-    ]);
-  }
-
-  Future<void> _initFaceDetector() async {
-    try {
-      await _faceDetector.initialize();
-      _faceDetectorReady = true;
-    } catch (e) {
-      debugPrint('خطا در راه‌اندازی تشخیص چهره (نادیده گرفته شد): $e');
-      _faceDetectorReady = false;
-    }
-  }
-
-  Future<void> _initCamera() async {
-    setState(() {
-      _initError = null;
-    });
-
-    List<CameraDescription> cameras;
-    try {
-      cameras = await availableCameras();
-    } catch (e) {
-      if (mounted) setState(() => _initError = 'خطا در دسترسی به دوربین‌ها: $e');
-      return;
-    }
-
-    if (cameras.isEmpty) {
-      if (mounted) setState(() => _initError = 'هیچ دوربینی پیدا نشد');
-      return;
-    }
-
-    final frontCamera = cameras.firstWhere(
-      (c) => c.lensDirection == CameraLensDirection.front,
-      orElse: () => cameras.first,
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
     );
-
-    final formatsToTry = Platform.isAndroid
-        ? [ImageFormatGroup.yuv420, ImageFormatGroup.nv21]
-        : [ImageFormatGroup.bgra8888];
-
-    Object? lastError;
-    for (final format in formatsToTry) {
-      try {
-        final controller = CameraController(
-          frontCamera,
-          ResolutionPreset.low,
-          enableAudio: false,
-          imageFormatGroup: format,
-        );
-        await controller.initialize();
-
-        try {
-          await controller.setFocusMode(FocusMode.locked);
-        } catch (_) {}
-        try {
-          await controller.setExposureMode(ExposureMode.locked);
-        } catch (_) {}
-
-        if (!mounted) {
-          await controller.dispose();
-          return;
-        }
-
-        _controller = controller;
-
-        setState(() {
-          _initError = null;
-        });
-        return;
-      } catch (e) {
-        lastError = e;
-        debugPrint('خطا در راه‌اندازی دوربین با فرمت $format: $e');
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _initError = 'راه‌اندازی دوربین ناموفق بود.\n$lastError';
-      });
-    }
-  }
-
-  void _toggleMonitoring() {
-    if (_controller == null || !_controller!.value.isInitialized) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('دوربین هنوز آماده نیست، چند لحظه صبر کنید')),
-      );
-      return;
-    }
-    if (_isMonitoring) {
-      _stopMonitoring();
-    } else {
-      _startMonitoring();
-    }
-  }
-
-  Future<void> _startMonitoring() async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-
-    try {
-      _isMonitoring = true;
-      _brightnessHistory.clear();
-      _heartRate = 0;
-      _frameCount = 0;
-      _lastFaceRect = null;
-      _framesSinceFaceSeen = 0;
-      _faceDetected = false;
-      _leftEyeOpen = true;
-      _rightEyeOpen = true;
-      _leftBlinkCount = 0;
-      _rightBlinkCount = 0;
-      _recentRawSamples.clear();
-      _filteredAcValue = 0;
-      _filterInitialized = false;
-      _recentFilteredSamples.clear();
-      _ampHistoryBuffer.clear();
-      _samplesSinceLastBeat = 999;
-      _pulsePhase = 0.0;
-      _pulseStepPerSample = _defaultPulseStep;
-      _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
-      _waveformNotifier.value = List<double>.from(_waveformBuffer);
-      _cameraFrameCount = 0;
-      _debugError = null;
-      _debugNotifier.value = 'در حال شروع دریافت فریم از دوربین...';
-
-      if (!_isStreaming) {
-        await _controller!.startImageStream(_onCameraImage);
-        _isStreaming = true;
-      }
-
-      // مقدار اولیه را 0 می‌گذاریم (نه -1) تا اولین تیک واچ‌داگ (بعد از ۳ ثانیه)
-      // اگر هیچ فریمی نرسیده باشد، فوراً خطا نمایش دهد
-      _lastWatchdogFrameCount = 0;
-      _watchdogTimer?.cancel();
-      _watchdogTimer = Timer.periodic(
-        const Duration(seconds: _watchdogTimeoutSeconds),
-        (_) => _checkStreamHealth(),
-      );
-
-      if (mounted) setState(() {});
-    } catch (e) {
-      _debugError = 'خطا در شروع پایش: $e';
-      _isMonitoring = false;
-      _debugNotifier.value = _debugError!;
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_debugError!)),
-        );
-      }
-    }
-  }
-
-  void _checkStreamHealth() {
-    if (!_isMonitoring) return;
-    if (_cameraFrameCount == _lastWatchdogFrameCount) {
-      _debugError = 'هیچ فریمی از دوربین دریافت نمی‌شود.\n'
-          'دوربین ممکن است توسط برنامه‌ی دیگری در حال استفاده باشد،\n'
-          'یا مجوز دوربین به‌درستی اعطا نشده باشد.';
-      _debugNotifier.value = _debugError!;
-      if (mounted) setState(() {});
-    }
-    _lastWatchdogFrameCount = _cameraFrameCount;
-  }
-
-  Future<void> _stopMonitoring() async {
-    _isMonitoring = false;
-    _watchdogTimer?.cancel();
-    _watchdogTimer = null;
-    _heartRate = 0;
-
-    if (_isStreaming && _controller != null) {
-      try {
-        await _controller!.stopImageStream();
-      } catch (_) {}
-      _isStreaming = false;
-    }
-
-    // پاک‌سازی نمای موج و پیام دیباگ تا در آخرین حالت فریز نمانند
-    _waveformBuffer.setAll(0, List<double>.filled(waveformLength, 0));
-    _waveformNotifier.value = List<double>.from(_waveformBuffer);
-    _debugError = null;
-    _debugNotifier.value = '';
-
-    if (mounted) setState(() {});
-  }
-
-  void _onCameraImage(CameraImage image) {
-    if (!_isMonitoring) return;
-
-    _cameraFrameCount++;
-
-    if (_faceDetectorReady && !_isDetectingFace) {
-      _isDetectingFace = true;
-      _detectFaceAndUpdateRoi(image);
-    }
-
-    if (_isProcessingFrame) return;
-    _isProcessingFrame = true;
-
-    double brightness = 0;
-    try {
-      final roi = _lastFaceRect != null
-          ? _foreheadRoiFromFace(_lastFaceRect!, image.width, image.height)
-          : _centerRoi(image.width, image.height);
-
-      brightness = Platform.isAndroid
-          ? _averageBrightnessYPlane(image, roi)
-          : _averageBrightnessBGRA(image, roi);
-
-      _handleNewBrightnessSample(brightness);
-    } catch (e) {
-      _debugError = 'خطا در پردازش فریم: $e';
-      debugPrint(_debugError);
-      _debugNotifier.value = _debugError!;
-    } finally {
-      _isProcessingFrame = false;
-    }
-  }
-
-  void _handleNewBrightnessSample(double brightness) {
-    _brightnessHistory.add(brightness.toInt());
-    if (_brightnessHistory.length > windowSize) {
-      _brightnessHistory.removeAt(0);
-    }
-
-    _updateWaveform(brightness);
-
-    _frameCount++;
-
-    if (_frameCount % 10 == 0) {
-      _debugNotifier.value = _debugError ??
-          'فریم دوربین: $_cameraFrameCount | نمونه: ${_brightnessHistory.length}/$windowSize | روشنایی: ${brightness.toStringAsFixed(1)}';
-    }
-
-    if (_frameCount % recalcIntervalFrames == 0 &&
-        _brightnessHistory.length >= windowSize) {
-      final computed = _calculateHeartRate(_brightnessHistory, sampleRate);
-
-      if (computed > 0 && mounted) {
-        setState(() {
-          _heartRate = _heartRate == 0
-              ? computed
-              : ((_heartRate * 0.6) + (computed * 0.4)).round();
-        });
-      }
-    }
-  }
-
-  Future<void> _detectFaceAndUpdateRoi(CameraImage image) async {
-    try {
-      final camera = _controller?.description;
-      if (camera == null) return;
-
-      final faces = await _faceDetector.detectFaces(image, camera);
-
-      if (faces.isNotEmpty) {
-        faces.sort((a, b) => (b.width * b.height).compareTo(a.width * a.height));
-        final face = faces.first;
-        _lastFaceRect = Rect.fromLTWH(face.left, face.top, face.width, face.height);
-        _framesSinceFaceSeen = 0;
-        if (!_faceDetected && mounted) {
-          setState(() => _faceDetected = true);
-        }
-        _updateBlinkState(face);
-      } else {
-        _framesSinceFaceSeen++;
-        if (_framesSinceFaceSeen > sampleRate) {
-          _lastFaceRect = null;
-          if (_faceDetected && mounted) {
-            setState(() => _faceDetected = false);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('خطا در تشخیص چهره (نادیده گرفته شد): $e');
-    } finally {
-      _isDetectingFace = false;
-    }
-  }
-
-  static const int _minBlinkIntervalMs = 120;
-  DateTime? _lastLeftBlinkTime;
-  DateTime? _lastRightBlinkTime;
-
-  void _updateBlinkState(FaceResult face) {
-    final leftProb = face.leftEyeOpenProbability;
-    final rightProb = face.rightEyeOpenProbability;
-    final now = DateTime.now();
-
-    bool changed = false;
-
-    if (leftProb != null) {
-      if (_leftEyeOpen && leftProb < _eyeClosedThreshold) {
-        _leftEyeOpen = false;
-        final okToCount = _lastLeftBlinkTime == null ||
-            now.difference(_lastLeftBlinkTime!).inMilliseconds >=
-                _minBlinkIntervalMs;
-        if (okToCount) {
-          _leftBlinkCount++;
-          _lastLeftBlinkTime = now;
-          changed = true;
-        }
-      } else if (!_leftEyeOpen && leftProb >= _eyeOpenThreshold) {
-        _leftEyeOpen = true;
-      }
-    }
-
-    if (rightProb != null) {
-      if (_rightEyeOpen && rightProb < _eyeClosedThreshold) {
-        _rightEyeOpen = false;
-        final okToCount = _lastRightBlinkTime == null ||
-            now.difference(_lastRightBlinkTime!).inMilliseconds >=
-                _minBlinkIntervalMs;
-        if (okToCount) {
-          _rightBlinkCount++;
-          _lastRightBlinkTime = now;
-          changed = true;
-        }
-      } else if (!_rightEyeOpen && rightProb >= _eyeOpenThreshold) {
-        _rightEyeOpen = true;
-      }
-    }
-
-    if (changed && mounted) {
-      setState(() {});
-    }
-  }
-
-  _Roi _centerRoi(int imageWidth, int imageHeight) {
-    final radius = min(imageWidth, imageHeight) ~/ 4;
-    return _Roi(
-      (imageWidth ~/ 2 - radius).clamp(0, imageWidth - 1),
-      (imageHeight ~/ 2 - radius).clamp(0, imageHeight - 1),
-      radius * 2,
-      radius * 2,
+    _scale = Tween<double>(begin: .9, end: 1).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack),
     );
-  }
-
-  _Roi _foreheadRoiFromFace(Rect faceRect, int imageWidth, int imageHeight) {
-    final faceWidth = faceRect.width;
-    final faceHeight = faceRect.height;
-
-    final left = (faceRect.left + faceWidth * 0.30).clamp(0, imageWidth - 1).toInt();
-    final top = (faceRect.top + faceHeight * 0.12).clamp(0, imageHeight - 1).toInt();
-    final width = (faceWidth * 0.40).clamp(1, imageWidth - left).toInt();
-    final height = (faceHeight * 0.15).clamp(1, imageHeight - top).toInt();
-
-    return _Roi(left, top, width, height);
-  }
-
-  double _averageBrightnessYPlane(CameraImage image, _Roi roi) {
-    final plane = image.planes[0];
-    final bytes = plane.bytes;
-    final bytesPerRow = plane.bytesPerRow;
-
-    final xEnd = (roi.left + roi.width).clamp(0, image.width);
-    final yEnd = (roi.top + roi.height).clamp(0, image.height);
-
-    double total = 0;
-    int count = 0;
-    for (int y = roi.top; y < yEnd; y++) {
-      final rowOffset = y * bytesPerRow;
-      for (int x = roi.left; x < xEnd; x++) {
-        final index = rowOffset + x;
-        if (index < 0 || index >= bytes.length) continue;
-        total += bytes[index];
-        count++;
-      }
-    }
-    return count == 0 ? 0 : total / count;
-  }
-
-  double _averageBrightnessBGRA(CameraImage image, _Roi roi) {
-    final plane = image.planes[0];
-    final bytes = plane.bytes;
-    final bytesPerRow = plane.bytesPerRow;
-
-    final xEnd = (roi.left + roi.width).clamp(0, image.width);
-    final yEnd = (roi.top + roi.height).clamp(0, image.height);
-
-    double total = 0;
-    int count = 0;
-    for (int y = roi.top; y < yEnd; y++) {
-      final rowOffset = y * bytesPerRow;
-      for (int x = roi.left; x < xEnd; x++) {
-        final pixelOffset = rowOffset + x * 4;
-        if (pixelOffset + 2 >= bytes.length) continue;
-        final b = bytes[pixelOffset];
-        final g = bytes[pixelOffset + 1];
-        final r = bytes[pixelOffset + 2];
-        total += 0.299 * r + 0.587 * g + 0.114 * b;
-        count++;
-      }
-    }
-    return count == 0 ? 0 : total / count;
-  }
-
-  static const double _lowPassCutoffHz = 3.5;
-  double _filteredAcValue = 0;
-  bool _filterInitialized = false;
-
-  final List<double> _recentFilteredSamples = [];
-  final List<double> _ampHistoryBuffer = [];
-  static const int _ampHistoryWindow = 20;
-  static const int _peakDetectWindow = 5;
-  int _samplesSinceLastBeat = 999;
-  static const int _minSamplesBetweenBeats = (sampleRate * 60) ~/ 220;
-
-  double _pulsePhase = 0.0;
-  double _pulseStepPerSample = _defaultPulseStep;
-
-  void _updateWaveform(double value) {
-    _recentRawSamples.add(value);
-    if (_recentRawSamples.length > _waveformShortWindow) {
-      _recentRawSamples.removeAt(0);
-    }
-    final localMean =
-        _recentRawSamples.reduce((a, b) => a + b) / _recentRawSamples.length;
-    final acValue = value - localMean;
-
-    final dt = 1.0 / sampleRate;
-    final rc = 1.0 / (2 * pi * _lowPassCutoffHz);
-    final alpha = dt / (rc + dt);
-
-    if (!_filterInitialized) {
-      _filteredAcValue = acValue;
-      _filterInitialized = true;
-    } else {
-      _filteredAcValue = _filteredAcValue + alpha * (acValue - _filteredAcValue);
-    }
-
-    // گام فاز پایه از BPM محاسبه‌شده می‌آید (پایدار)
-    if (_heartRate > 0) {
-      // تعداد سیکل بر نمونه = BPM / (sampleRate * 60)
-      final targetStep = _heartRate / (sampleRate * 60);
-      _pulseStepPerSample += (targetStep - _pulseStepPerSample) * 0.05;
-    }
-
-    _recentFilteredSamples.add(_filteredAcValue);
-    if (_recentFilteredSamples.length > _peakDetectWindow * 2 + 1) {
-      _recentFilteredSamples.removeAt(0);
-    }
-    _ampHistoryBuffer.add(_filteredAcValue);
-    if (_ampHistoryBuffer.length > _ampHistoryWindow) {
-      _ampHistoryBuffer.removeAt(0);
-    }
-    _samplesSinceLastBeat++;
-
-    bool beatDetected = false;
-    if (_recentFilteredSamples.length == _peakDetectWindow * 2 + 1) {
-      final mid = _recentFilteredSamples[_peakDetectWindow];
-      bool isLocalMax = true;
-      for (int i = 0; i < _recentFilteredSamples.length; i++) {
-        if (i == _peakDetectWindow) continue;
-        if (_recentFilteredSamples[i] > mid) {
-          isLocalMax = false;
-          break;
-        }
-      }
-      final amplitudeThreshold = _adaptiveAmplitudeThreshold();
-      final hasMeaningfulAmplitude = mid.abs() > amplitudeThreshold;
-
-      if (isLocalMax &&
-          hasMeaningfulAmplitude &&
-          _samplesSinceLastBeat >= _minSamplesBetweenBeats) {
-        beatDetected = true;
-        _samplesSinceLastBeat = 0;
-      }
-    }
-
-    if (beatDetected) {
-      _pulsePhase *= 0.3;
-    }
-
-    final pulseValue = _pulseShape(_pulsePhase);
-    _pulsePhase += _pulseStepPerSample;
-    if (_pulsePhase >= 1.0) {
-      _pulsePhase -= 1.0;
-    }
-
-    _waveformBuffer.removeAt(0);
-    _waveformBuffer.add(pulseValue);
-    _waveformNotifier.value = List<double>.from(_waveformBuffer);
-  }
-
-  // شکل استاندارد یک پالس PPG: صعود تیز سپس فرود نرم‌تر با یک دندانه‌ی
-  // کوچک ثانویه (dicrotic notch) شبیه موج واقعی نبض
-  double _pulseShape(double phase) {
-    if (phase >= 1.0) return 0.0;
-    if (phase < 0.15) {
-      // صعود تیز
-      final t = phase / 0.15;
-      return _easeInQuad(t);
-    } else if (phase < 0.45) {
-      // فرود اولیه‌ی سریع بعد از قله
-      final t = (phase - 0.15) / 0.30;
-      return 1.0 - _easeInCubic(t) * 0.65;
-    } else if (phase < 0.60) {
-      // دندانه‌ی کوچک ثانویه (dicrotic notch)
-      final t = (phase - 0.45) / 0.15;
-      return 0.35 + sin(t * pi) * 0.12;
-    } else {
-      // بازگشت نرم از سطح ۰.۳۵ (انتهای dicrotic notch) به خط پایه‌ی صفر
-      final t = (phase - 0.60) / 0.40;
-      return 0.35 * (1.0 - _easeOutCubic(t));
-    }
-  }
-
-  double _easeOutCubic(double t) => 1 - pow(1 - t, 3).toDouble();
-  double _easeInCubic(double t) => pow(t, 3).toDouble();
-  double _easeInQuad(double t) => t * t;
-
-  double _adaptiveAmplitudeThreshold() {
-    if (_ampHistoryBuffer.length < 10) return 0.05;
-    final samples = _ampHistoryBuffer;
-    final variance = samples
-            .map((v) => v * v)
-            .reduce((a, b) => a + b) /
-        samples.length;
-    final stdDev = sqrt(variance);
-    return max(0.02, stdDev * 0.25);
-  }
-
-  List<double> _detrend(List<double> data, int halfWindow) {
-    final n = data.length;
-    final result = List<double>.filled(n, 0);
-    for (int i = 0; i < n; i++) {
-      final start = max(0, i - halfWindow);
-      final end = min(n, i + halfWindow + 1);
-      double sum = 0;
-      for (int j = start; j < end; j++) {
-        sum += data[j];
-      }
-      final localMean = sum / (end - start);
-      result[i] = data[i] - localMean;
-    }
-    return result;
-  }
-
-  List<double> _smooth(List<double> data, int halfWindow) {
-    final n = data.length;
-    final result = List<double>.filled(n, 0);
-    for (int i = 0; i < n; i++) {
-      final start = max(0, i - halfWindow);
-      final end = min(n, i + halfWindow + 1);
-      double sum = 0;
-      for (int j = start; j < end; j++) {
-        sum += data[j];
-      }
-      result[i] = sum / (end - start);
-    }
-    return result;
-  }
-
-  double _standardDeviation(List<double> data) {
-    final mean = data.reduce((a, b) => a + b) / data.length;
-    final variance =
-        data.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) /
-            data.length;
-    return sqrt(variance);
-  }
-
-  int _calculateHeartRate(List<int> brightnessData, int fps) {
-    if (brightnessData.length < 30) return 0;
-
-    final raw = brightnessData.map((v) => v.toDouble()).toList();
-    final smoothed = _smooth(raw, 1);
-    final detrended = _detrend(smoothed, fps ~/ 2);
-
-    if (detrended.every((v) => v == 0)) return 0;
-
-    final stdDev = _standardDeviation(detrended);
-    if (stdDev == 0) return 0;
-
-    final prominenceThreshold = stdDev * 0.35;
-
-    List<int> peaks = [];
-    for (int i = 1; i < detrended.length - 1; i++) {
-      if (detrended[i] > detrended[i - 1] &&
-          detrended[i] > detrended[i + 1] &&
-          detrended[i] > prominenceThreshold) {
-        peaks.add(i);
-      }
-    }
-
-    if (peaks.length < 2) return 0;
-
-    double avgIntervalSeconds = 0;
-    int intervalsCount = 0;
-    for (int i = 1; i < peaks.length; i++) {
-      double interval = (peaks[i] - peaks[i - 1]) / fps;
-      if (interval > 0.3 && interval < 2.0) {
-        avgIntervalSeconds += interval;
-        intervalsCount++;
-      }
-    }
-
-    if (intervalsCount == 0) return 0;
-    avgIntervalSeconds /= intervalsCount;
-
-    return (60 / avgIntervalSeconds).round();
+    _animationController.forward();
   }
 
   @override
   void dispose() {
-    _watchdogTimer?.cancel();
-    if (_isStreaming) {
-      _controller?.stopImageStream();
-    }
-    _controller?.dispose();
-    _faceDetector.dispose();
-    _waveformNotifier.dispose();
-    _debugNotifier.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('اندازه‌گیری ضربان قلب'),
-        centerTitle: true,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: SingleChildScrollView(
+      body: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xff1565C0), Color(0xff0D47A1)],
+          ),
+        ),
+        child: SafeArea(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'لطفاً در جای ثابت بنشینید\nو دوربین را به سمت صورت خود بگیرید',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              _buildCameraPreview(),
-              const SizedBox(height: 24),
-              Text(
-                '$_heartRate',
-                style: const TextStyle(
-                  fontSize: 72,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue,
+              const SizedBox(height: 55),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "به بخش مشاوره غیر حضوری سینا\n.خوش آمدید",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 30, color: Colors.white, height: 1.3),
                 ),
               ),
-              const Text(
-                'ضربه در دقیقه (BPM)',
-                style: TextStyle(fontSize: 18, color: Colors.grey),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                height: 70,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(12),
+              // ===== فضای کشسان برای وسط قرار گرفتن لوگو =====
+              Expanded(
+                flex: 1,
+                child: Center(
+                  child: ScaleTransition(
+                    scale: _scale,
+                    child: SizedBox(
+                      width: 300,
+                      height: 300,
+                      child: Image.asset("assets/images/sina.png", fit: BoxFit.contain),
+                    ),
+                  ),
                 ),
-                child: ValueListenableBuilder<List<double>>(
-                  valueListenable: _waveformNotifier,
-                  builder: (context, data, _) {
-                    return CustomPaint(
-                      size: const Size(double.infinity, 70),
-                      painter: _WaveformPainter(data),
+              ),
+              const SizedBox(height: 25),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  "برای بهتر شدن خود را\n.بهتر بشناسید",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 24, color: Colors.white, height: 1.5),
+                ),
+              ),
+              const SizedBox(height: 25),
+              SizedBox(
+                width: 180,
+                height: 56,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xff23C66F),
+                    foregroundColor: Colors.white,
+                    elevation: 8,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (_) => const BrowserPage()),
                     );
                   },
+                  child: const Text("ورود", style: TextStyle(fontSize: 22)),
                 ),
               ),
-              const SizedBox(height: 6),
-              ValueListenableBuilder<String>(
-                valueListenable: _debugNotifier,
-                builder: (context, text, _) {
-                  return Text(
-                    text,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: _debugError != null ? Colors.red : Colors.grey,
-                    ),
-                    textAlign: TextAlign.center,
-                  );
-                },
-              ),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Column(
-                    children: [
-                      Icon(
-                        _leftEyeOpen ? Icons.visibility : Icons.visibility_off,
-                        color: Colors.blue,
-                      ),
-                      const SizedBox(height: 4),
-                      Text('پلک چپ: $_leftBlinkCount'),
-                    ],
-                  ),
-                  Column(
-                    children: [
-                      Icon(
-                        _rightEyeOpen ? Icons.visibility : Icons.visibility_off,
-                        color: Colors.blue,
-                      ),
-                      const SizedBox(height: 4),
-                      Text('پلک راست: $_rightBlinkCount'),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 36),
-              ElevatedButton.icon(
-                onPressed: _toggleMonitoring,
-                icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
-                label: Text(_isMonitoring ? 'توقف پایش' : 'شروع پایش'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
+              const SizedBox(height: 30),
             ],
           ),
         ),
       ),
     );
   }
-
-  Widget _buildCameraPreview() {
-    if (_initError != null) {
-      return Column(
-        children: [
-          const Icon(Icons.error_outline, color: Colors.red, size: 48),
-          const SizedBox(height: 8),
-          Text(
-            _initError!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.red, fontSize: 13),
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: _initCamera,
-            child: const Text('تلاش دوباره'),
-          ),
-        ],
-      );
-    }
-
-    if (_controller == null || !_controller!.value.isInitialized) {
-      return const CircularProgressIndicator();
-    }
-
-    return Stack(
-      alignment: Alignment.bottomCenter,
-      children: [
-        SizedBox(
-          height: 200,
-          width: 200,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(100),
-            child: CameraPreview(_controller!),
-          ),
-        ),
-        if (_isMonitoring && !_faceDetected)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'چهره شناسایی نشد',
-                style: TextStyle(color: Colors.white, fontSize: 12),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
 }
 
-// رسم موج زنده‌ی ضربان روی یک سطح تیره، شبیه مانیتورهای PPG
-class _WaveformPainter extends CustomPainter {
-  final List<double> data;
-  const _WaveformPainter(this.data);
+// ===== مرورگر با InAppWebView (بدون تغییر) =====
+class BrowserPage extends StatefulWidget {
+  const BrowserPage({super.key});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final basePaint = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 1;
-    canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
-      basePaint,
-    );
+  State<BrowserPage> createState() => _BrowserPageState();
+}
 
-    if (data.length < 2) return;
+class _BrowserPageState extends State<BrowserPage> {
+  DateTime? _lastBackPressed;
+  InAppWebViewController? controller;
+  double progress = 0;
+  bool hasInternet = true;
+  late final StreamSubscription<List<ConnectivityResult>> connectivitySubscription;
 
-    double maxAbs = 0;
-    for (final v in data) {
-      final a = v.abs();
-      if (a > maxAbs) maxAbs = a;
-    }
-    final scale = maxAbs < 0.5 ? 1.0 : (size.height / 2 - 6) / maxAbs;
-
-    final wavePaint = Paint()
-      ..color = Colors.redAccent
-      ..strokeWidth = 2.2
-      ..style = PaintingStyle.stroke
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
-
-    final path = Path();
-    final dx = size.width / (data.length - 1);
-    for (int i = 0; i < data.length; i++) {
-      final x = i * dx;
-      final y = size.height / 2 - data[i] * scale;
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
+  @override
+  void initState() {
+    super.initState();
+    _checkConnection();
+    connectivitySubscription =
+        Connectivity().onConnectivityChanged.listen((results) {
+      final connected = !results.contains(ConnectivityResult.none);
+      if (mounted) {
+        setState(() => hasInternet = connected);
+        if (connected) controller?.reload();
       }
+    });
+  }
+
+  Future<void> _checkConnection() async {
+    final result = await Connectivity().checkConnectivity();
+    if (mounted) {
+      setState(() => hasInternet = !result.contains(ConnectivityResult.none));
     }
-    canvas.drawPath(path, wavePaint);
   }
 
   @override
-  bool shouldRepaint(covariant _WaveformPainter oldDelegate) => true;
+  void dispose() {
+    connectivitySubscription.cancel();
+    super.dispose();
+  }
+
+  Future<bool> _onWillPop() async {
+    if (controller != null) {
+      final canGoBack = await controller!.canGoBack();
+      if (canGoBack) {
+        await controller!.goBack();
+        return false;
+      }
+    }
+
+    final now = DateTime.now();
+    if (_lastBackPressed == null ||
+        now.difference(_lastBackPressed!) > const Duration(seconds: 2)) {
+      _lastBackPressed = now;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            ".برای خروج، دوباره دکمه بازگشت را بزنید",
+            textAlign: TextAlign.center,
+          ),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        body: SafeArea(
+          child: Stack(
+            children: [
+              if (hasInternet)
+                InAppWebView(
+                  gestureRecognizers: {
+                    Factory<OneSequenceGestureRecognizer>(
+                      () => EagerGestureRecognizer(),
+                    ),
+                    Factory<OneSequenceGestureRecognizer>(
+                      () => TapGestureRecognizer()..onTap = () {},
+                    ),
+                  },
+                  initialUrlRequest: URLRequest(
+                    url: WebUri("https://www.sinapsycho.com/consultAndroid/index"),
+                  ),
+                  initialSettings: InAppWebViewSettings(
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    databaseEnabled: true,
+                    cacheEnabled: true,
+                    supportZoom: false,
+                    allowsInlineMediaPlayback: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    thirdPartyCookiesEnabled: true,
+                    useHybridComposition: true,
+                    transparentBackground: false,
+                    disableContextMenu: true,
+                    supportMultipleWindows: false,
+                    javaScriptCanOpenWindowsAutomatically: true,
+                    useShouldOverrideUrlLoading: false,
+                  ),
+                  onWebViewCreated: (c) async {
+                    controller = c;
+                    await c.setSettings(
+                      settings: InAppWebViewSettings(
+                        userAgent:
+                            "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36",
+                      ),
+                    );
+                  },
+                  onLoadStart: (controller, url) {
+                    if (!mounted) return;
+                    setState(() => progress = 0);
+                  },
+                  onProgressChanged: (controller, value) {
+                    if (!mounted) return;
+                    setState(() => progress = value / 100);
+                  },
+                  onLoadStop: (controller, url) async {
+                    await controller.evaluateJavascript(source: """
+                      document.querySelectorAll('a,button').forEach(function(e){
+                        if(e.innerText.trim().includes('بازگشت')){
+                          e.onclick = function(event){
+                            event.preventDefault();
+                            window.location.href='https://www.sinapsycho.com/Consult/index';
+                          }
+                        }
+                      });
+                    """);
+                    if (!mounted) return;
+                    setState(() => progress = 1);
+                  },
+                  onConsoleMessage: (controller, consoleMessage) {
+                    debugPrint(consoleMessage.message);
+                  },
+                ),
+              if (!hasInternet)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 25),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.wifi_off_rounded, size: 90, color: Colors.red),
+                        const SizedBox(height: 25),
+                        const Text("اتصال اینترنت برقرار نیست", style: TextStyle(fontSize: 28)),
+                        const SizedBox(height: 15),
+                        const Text("لطفاً اتصال اینترنت خود را بررسی کنید.", style: TextStyle(fontSize: 20)),
+                        const SizedBox(height: 35),
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            await _checkConnection();
+                            if (hasInternet) controller?.reload();
+                          },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text("تلاش مجدد"),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (progress < 1 && hasInternet)
+                LinearProgressIndicator(value: progress, minHeight: 3),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
