@@ -36,104 +36,202 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage>
     with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _scale;
+  late final AnimationController _controller;
+  late final Animation<double> _logoScale;
+  late final Animation<double> _fadeIn;
+  late final Animation<Offset> _slideUp;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
+    _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 1400),
     );
-    _scale = Tween<double>(begin: .9, end: 1).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOutBack),
+    _logoScale = Tween<double>(begin: .85, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, .55, curve: Curves.easeOutBack),
+      ),
     );
-    _animationController.forward();
+    _fadeIn = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(.35, 1, curve: Curves.easeOut),
+    );
+    _slideUp = Tween<Offset>(
+      begin: const Offset(0, .12),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(.35, 1, curve: Curves.easeOut),
+      ),
+    );
+    _controller.forward();
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final logoSize = (size.width * .55).clamp(200.0, 320.0);
+
     return Scaffold(
       body: Container(
         width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xff1565C0), Color(0xff0D47A1)],
+            colors: [Color(0xff1976D2), Color(0xff0D47A1), Color(0xff0A3880)],
+            stops: [0, .55, 1],
           ),
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 55),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "به بخش مشاوره غیر حضوری سینا\n.خوش آمدید",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 30, color: Colors.white, height: 1.3),
-                ),
-              ),
-              // ===== فضای کشسان برای وسط قرار گرفتن لوگو =====
-              Expanded(
-                flex: 1,
-                child: Center(
-                  child: ScaleTransition(
-                    scale: _scale,
-                    child: SizedBox(
-                      width: 300,
-                      height: 300,
-                      child: Image.asset("assets/images/sina.png", fit: BoxFit.contain),
+        child: Stack(
+          children: [
+            // تزئین: دایره‌های نرم پس‌زمینه برای عمق بیشتر
+            Positioned(
+              top: -60,
+              right: -40,
+              child: _glowCircle(180, Colors.white.withOpacity(.05)),
+            ),
+            Positioned(
+              bottom: -80,
+              left: -60,
+              child: _glowCircle(220, Colors.white.withOpacity(.04)),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  FadeTransition(
+                    opacity: _fadeIn,
+                    child: SlideTransition(
+                      position: _slideUp,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 24),
+                        child: Text(
+                          "به بخش مشاوره غیر حضوری سینا\nخوش آمدید",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 25),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  "برای بهتر شدن خود را\n.بهتر بشناسید",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 24, color: Colors.white, height: 1.5),
-                ),
-              ),
-              const SizedBox(height: 25),
-              SizedBox(
-                width: 180,
-                height: 56,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff23C66F),
-                    foregroundColor: Colors.white,
-                    elevation: 8,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(22),
+                  Expanded(
+                    child: Center(
+                      child: ScaleTransition(
+                        scale: _logoScale,
+                        child: Container(
+                          width: logoSize,
+                          height: logoSize,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(.25),
+                                blurRadius: 40,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(20),
+                          child: Image.asset(
+                            "assets/images/sina.png",
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (_) => const BrowserPage()),
-                    );
-                  },
-                  child: const Text("ورود", style: TextStyle(fontSize: 22)),
-                ),
+                  FadeTransition(
+                    opacity: _fadeIn,
+                    child: SlideTransition(
+                      position: _slideUp,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 28),
+                        child: Text(
+                          "برای بهتر شدن، خود را بهتر بشناسید",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.white70,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  FadeTransition(
+                    opacity: _fadeIn,
+                    child: SlideTransition(
+                      position: _slideUp,
+                      child: SizedBox(
+                        width: 200,
+                        height: 56,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xff23C66F),
+                            foregroundColor: Colors.white,
+                            elevation: 6,
+                            shadowColor: const Color(0xff23C66F).withOpacity(.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.pushReplacement(
+                              context,
+                              PageRouteBuilder(
+                                transitionDuration:
+                                    const Duration(milliseconds: 400),
+                                pageBuilder: (_, anim, __) =>
+                                    const BrowserPage(),
+                                transitionsBuilder: (_, anim, __, child) =>
+                                    FadeTransition(opacity: anim, child: child),
+                              ),
+                            );
+                          },
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text("ورود", style: TextStyle(fontSize: 20)),
+                              SizedBox(width: 6),
+                              Icon(Icons.arrow_forward, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 36),
+                ],
               ),
-              const SizedBox(height: 30),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  Widget _glowCircle(double size, Color color) => Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+      );
 }
 
 // ===== مرورگر با InAppWebView (بدون تغییر) =====
