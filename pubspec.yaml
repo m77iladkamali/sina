@@ -1,46 +1,40 @@
-name: heart_rate_monitor
-description: "اندازه‌گیری ضربان قلب و پلک با استفاده از دوربین"
-publish_to: "none"
+name: sina
+description: "مشاور همراه سینا"
+publish_to: 'none'
 version: 1.0.0+1
- 
+
 environment:
   sdk: ">=3.3.0 <4.0.0"
- 
+
 dependencies:
   flutter:
     sdk: flutter
- 
-  # دوربین - برای موبایل (اندروید/iOS) کافی است. برای دسکتاپ camera_desktop هم لازم است.
-  camera: ^0.11.0
-  camera_desktop: ^1.2.0 # فقط روی ویندوز/مک/لینوکس استفاده می‌شود؛ روی موبایل بی‌اثر است
- 
-  # تشخیص چهره و پلک - نسخه‌ی موبایل (ML Kit، فقط اندروید/iOS)
-  google_mlkit_face_detection: ^0.13.0
-  google_mlkit_commons: ^0.11.1
- 
-  # تشخیص چهره و پلک - نسخه‌ی دسکتاپ (ویندوز/مک/لینوکس)؛ کراس‌پلتفرم است
-  # و در صورت نیاز روی موبایل هم کار می‌کند، ولی این پروژه فقط برای دسکتاپ به آن نیاز دارد.
-  face_detection_tflite: ^6.4.1
- 
+  connectivity_plus: ^6.1.5
   cupertino_icons: ^1.0.8
- 
+  webview_flutter: ^4.13.1
+  flutter_custom_tabs: ^2.1.0
+  flutter_inappwebview: ^6.1.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^5.0.0
+
   flutter_launcher_icons: ^0.14.3
- 
+
 flutter_launcher_icons:
   android: true
-  ios: false # فولدر ios/ در این مخزن اسکلت‌بندی نشده؛ فعلاً فقط اندروید و دسکتاپ هدف است
-  image_path: "assets/images/sina1.png"
- 
+  ios: false
+  image_path: assets/images/sina1.png
+  min_sdk_android: 21
+
 flutter:
   uses-material-design: true
- 
-  # فونت فارسی - فایل فونت را در پوشه‌ی assets/fonts/ قرار دهید
+
+  assets:
+    - assets/images/sina.png
+
   fonts:
     - family: Far_Homa
       fonts:
         - asset: assets/fonts/Far_Homa.ttf
- 
